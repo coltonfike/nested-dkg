@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "crates/cli",
+    "crates/networking",
+    "crates/univariate-dkg",
+    "crates/bivariate-dkg",
+    "crates/types",
+]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+incremental = true
+
+[profile.dev.package.miracl_core_bls12381]
+opt-level = 3

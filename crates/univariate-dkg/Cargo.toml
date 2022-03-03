@@ -1,0 +1,19 @@
+[package]
+name = "univariate-dkg"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+types = { path = "../types" }
+networking = { path = "../networking" }
+ic-crypto-internal-threshold-sig-bls12381 = { git = "https://github.com/dfinity/ic.git" }
+rand = "0.7.3"
+rand_chacha = "0.2.2"
+rand_core = "0.5.1"
+bls12_381 = { version = "0.5.0", default-features = false, features = ["groups", "pairings", "alloc", "experimental"] }
+bincode = "1.3.3"
+group = "0.10.0"
+tokio = { version = "1.17.0", features = ["full"] }
+tokio-stream = "0.1.8"
