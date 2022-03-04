@@ -308,18 +308,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cli"
-version = "0.1.0"
-dependencies = [
- "bivariate-dkg",
- "clap",
- "serde",
- "tokio",
- "types",
- "univariate-dkg",
-]
-
-[[package]]
 name = "cloudabi"
 version = "0.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1187,6 +1175,17 @@ dependencies = [
  "regex-syntax",
  "syn",
  "utf8-ranges",
+]
+
+[[package]]
+name = "main"
+version = "0.1.0"
+dependencies = [
+ "bivariate-dkg",
+ "clap",
+ "tokio",
+ "types",
+ "univariate-dkg",
 ]
 
 [[package]]

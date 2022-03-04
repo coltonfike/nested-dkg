@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "crates/cli",
+    "crates/main",
     "crates/networking",
     "crates/univariate-dkg",
     "crates/bivariate-dkg",

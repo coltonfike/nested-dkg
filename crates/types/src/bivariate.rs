@@ -11,7 +11,10 @@ use std::ops::{AddAssign, Mul, MulAssign};
 
 #[derive(PartialEq, Debug, Serialize, Deserialize)]
 pub enum Message {
-    Shares(Vec<Vec<Vec<u8>>>, Vec<Vec<Vec<u8>>>),
+    Shares(
+        #[serde(with = "serde_bytes")] Vec<u8>,
+        #[serde(with = "serde_bytes")] Vec<u8>,
+    ),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -163,64 +166,84 @@ impl From<Polynomial> for PublicCoefficients {
 pub struct Dealing(pub PublicCoefficients, pub Vec<Vec<Scalar>>);
 
 impl Dealing {
-    pub fn serialize(&self) -> (Vec<Vec<Vec<u8>>>, Vec<Vec<Vec<u8>>>) {
+    pub fn serialize(&self) -> (Vec<u8>, Vec<u8>) {
         (
             self.0
                 .coefficients
                 .iter()
-                .fold(Vec::new(), |mut acc, coefficient| {
-                    acc.push(coefficient.iter().fold(Vec::new(), |mut acc, coefficient| {
-                        acc.push(coefficient.0.to_bytes().as_ref().to_vec());
-                        acc
-                    }));
-                    acc
-                }),
-            self.1.iter().fold(Vec::new(), |mut acc, scalar| {
-                acc.push(scalar.iter().fold(Vec::new(), |mut acc, scalar| {
-                    acc.push(scalar.to_bytes().to_vec());
-                    acc
-                }));
-                acc
-            }),
+                .flat_map(|coefficient| {
+                    coefficient
+                        .iter()
+                        .flat_map(|coefficient| coefficient.0.to_bytes().as_ref().to_vec())
+                        .collect::<Vec<u8>>()
+                })
+                .collect(),
+            self.1
+                .iter()
+                .flat_map(|scalar| {
+                    scalar
+                        .iter()
+                        .flat_map(|scalar| scalar.to_bytes().to_vec())
+                        .collect::<Vec<u8>>()
+                })
+                .collect(),
         )
     }
 
-    pub fn deserialize(coefficients: Vec<Vec<Vec<u8>>>, scalars: Vec<Vec<Vec<u8>>>) -> Self {
+    pub fn deserialize(
+        coefficients: Vec<u8>,
+        scalars: Vec<u8>,
+        group_size: usize,
+        t_prime: usize,
+    ) -> Self {
         Dealing(
             PublicCoefficients {
-                coefficients: coefficients
-                    .iter()
-                    .fold(Vec::new(), |mut acc, coefficient| {
-                        acc.push(coefficient.iter().fold(Vec::new(), |mut acc, coefficient| {
-                            acc.push(PublicKey(G2Projective::from(
-                                &G2Affine::from_compressed(
-                                    coefficient
-                                        .as_slice()
-                                        .try_into()
-                                        .expect("Slice for PublicCoefficient is not len 96"),
-                                )
-                                .unwrap(), // unwrap since CtOption doesn't have expect
-                            )));
-                            acc
-                        }));
-                        acc
-                    }),
+                coefficients: coefficients.chunks_exact(96).map(|chunk| {
+                        PublicKey(G2Projective::from(&G2Affine::from_compressed(chunk.try_into().unwrap()).unwrap()))
+                    }).collect::<Vec<PublicKey>>()
+                    .chunks_exact(t_prime)
+                    .map(|chunk| chunk.to_vec())
+                    .collect()
+                // coefficients: coefficients
+                //     .iter()
+                //     .fold(Vec::new(), |mut acc, coefficient| {
+                //         acc.push(coefficient.iter().fold(Vec::new(), |mut acc, coefficient| {
+                //             acc.push(PublicKey(G2Projective::from(
+                //                 &G2Affine::from_compressed(
+                //                     coefficient
+                //                         .as_slice()
+                //                         .try_into()
+                //                         .expect("Slice for PublicCoefficient is not len 96"),
+                //                 )
+                //                 .unwrap(), // unwrap since CtOption doesn't have expect
+                //             )));
+                //             acc
+                //         }));
+                //         acc
+                //     }),
             },
-            scalars.iter().fold(Vec::new(), |mut acc, scalar| {
-                acc.push(scalar.iter().fold(Vec::new(), |mut acc, scalar| {
-                    acc.push(
-                        Scalar::from_bytes(
-                            scalar
-                                .as_slice()
-                                .try_into()
-                                .expect("Slice for Scalar is not len 32"),
-                        )
-                        .unwrap(), // unwrap since CtOption doesn't have expect
-                    );
-                    acc
-                }));
-                acc
-            }),
+            scalars
+                .chunks_exact(32)
+                .map(|chunk| Scalar::from_bytes(chunk.try_into().unwrap()).unwrap())
+                .collect::<Vec<Scalar>>()
+                .chunks_exact(group_size)
+                .map(|chunk| chunk.to_vec())
+                .collect(),
+            // scalars.iter().fold(Vec::new(), |mut acc, scalar| {
+            //     acc.push(scalar.iter().fold(Vec::new(), |mut acc, scalar| {
+            //         acc.push(
+            //             Scalar::from_bytes(
+            //                 scalar
+            //                     .as_slice()
+            //                     .try_into()
+            //                     .expect("Slice for Scalar is not len 32"),
+            //             )
+            //             .unwrap(), // unwrap since CtOption doesn't have expect
+            //         );
+            //         acc
+            //     }));
+            //     acc
+            // }),
         )
     }
 }

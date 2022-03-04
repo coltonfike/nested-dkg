@@ -1,5 +1,5 @@
 use clap::Parser;
-use cli::utils::*;
+use main::*;
 use types::{Cli, Command};
 
 #[tokio::main]

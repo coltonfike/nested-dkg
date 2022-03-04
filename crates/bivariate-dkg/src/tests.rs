@@ -41,7 +41,7 @@ fn run_121_node_dkg() {
 fn serialize() {
     let original_dealing = generate_shares((11, 11), (3, 5));
     let (coefficients, scalars) = original_dealing.serialize();
-    let original_msg = Message::Shares(coefficients, scalars);
+    let original_msg = Message::Shares(coefficients.clone(), scalars);
     let msg = bincode::serialize(&original_msg).unwrap();
 
     let recovered_msg: Message = bincode::deserialize(msg.as_slice()).unwrap();
@@ -51,13 +51,14 @@ fn serialize() {
     );
 
     let recovered_dealing = match recovered_msg {
-        Message::Shares(c, s) => Dealing::deserialize(c, s),
+        Message::Shares(c, s) => Dealing::deserialize(c, s, 11, 5),
     };
 
     assert_eq!(
         original_dealing.0, recovered_dealing.0,
         "Coefficients do not match"
     );
+
     assert_eq!(
         original_dealing.1, recovered_dealing.1,
         "Scalars do not match"

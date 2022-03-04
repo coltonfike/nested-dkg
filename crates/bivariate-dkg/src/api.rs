@@ -80,9 +80,12 @@ async fn run_single_node(
                 dealings.push(Dealing::deserialize(
                     serialized_coefficients,
                     serialized_shares,
+                    11,
+                    5,
                 ));
             }
         }
+        println!("Time taken to deserialize: {:?}", t.elapsed());
     }
 
     let (coefficients, sk) = combine_dealings(my_id, &dealings);
