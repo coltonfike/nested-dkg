@@ -36,7 +36,7 @@ impl Node {
 
         let incoming_streams = tokio::spawn(listen(my_addr, to_connect));
 
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         let outgoing_streams = connect(my_id, connect_to).await;
         let incoming_streams = incoming_streams.await.expect("failed to finish listening");
 
@@ -151,5 +151,6 @@ async fn connect(my_id: Id, connect_to: BTreeMap<Id, String>) -> BTreeMap<Id, Tc
         stream.write_all(&to_send).await.expect("failed to send id");
         streams.insert(id, stream);
     }
+
     streams
 }

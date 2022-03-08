@@ -156,6 +156,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "bls12_381",
+ "group",
  "ic-crypto-internal-threshold-sig-bls12381",
  "networking",
  "rand 0.7.3",

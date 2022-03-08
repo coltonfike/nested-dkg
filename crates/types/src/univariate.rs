@@ -1,5 +1,5 @@
 use bls12_381::{G2Affine, G2Projective, Scalar};
-use group::GroupEncoding;
+use group::Curve;
 use ic_crypto_internal_threshold_sig_bls12381::types::{PublicCoefficients, PublicKey};
 use serde::{Deserialize, Serialize};
 
@@ -17,7 +17,14 @@ impl Dealing {
                 .coefficients
                 .iter()
                 .fold(Vec::new(), |mut acc, coefficient| {
-                    acc.push(coefficient.0.to_bytes().as_ref().to_vec());
+                    acc.push(
+                        coefficient
+                            .0
+                            .to_affine()
+                            .to_uncompressed()
+                            .as_ref()
+                            .to_vec(),
+                    );
                     acc
                 }),
             self.1.iter().fold(Vec::new(), |mut acc, scalar| {
@@ -34,7 +41,7 @@ impl Dealing {
                     .iter()
                     .fold(Vec::new(), |mut acc, coefficient| {
                         acc.push(PublicKey(G2Projective::from(
-                            &G2Affine::from_compressed(
+                            &G2Affine::from_uncompressed_unchecked(
                                 coefficient
                                     .as_slice()
                                     .try_into()

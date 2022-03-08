@@ -14,6 +14,8 @@ pub enum Command {
     BivariateNiDKG(BivariateNiDKGArgs),
     UnivariateThresholdSignature(UnivariateThresholdSignatureArgs),
     BivariateThresholdSignature(BivariateThresholdSignatureArgs),
+    UnivariateShareFile(UnivariateShareFileArgs),
+    BivariateShareFile(BivariateShareFileArgs),
 }
 
 #[derive(Args, Clone, Copy, Debug, Eq, PartialEq)]
@@ -80,10 +82,10 @@ pub struct BivariateNiDKGArgs {
 pub struct UnivariateThresholdSignatureArgs {
     #[clap(short = 'i')]
     pub node_index: usize,
+    #[clap(short = 'n')]
+    pub num_nodes_n: usize,
     #[clap(short = 't')]
     pub threshold: usize,
-    #[clap(short = 's')]
-    pub share_file: std::path::PathBuf,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
@@ -92,10 +94,32 @@ pub struct BivariateThresholdSignatureArgs {
     pub node_index_i: usize,
     #[clap(short = 'j')]
     pub node_index_j: usize,
+    #[clap(short = 'n')]
+    pub num_nodes_n: usize,
+    #[clap(short = 'm')]
+    pub num_nodes_m: usize,
     #[clap(short = 't')]
     pub threshold_t: usize,
     #[clap(short = 'p')]
     pub threshold_t_prime: usize,
-    #[clap(short = 's')]
-    pub share_file: std::path::PathBuf,
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+pub struct UnivariateShareFileArgs {
+    #[clap(short = 'n')]
+    pub num_nodes: usize,
+    #[clap(short = 't')]
+    pub threshold_t: usize,
+}
+
+#[derive(Args, Clone, Debug, Eq, PartialEq)]
+pub struct BivariateShareFileArgs {
+    #[clap(short = 'n')]
+    pub num_nodes_n: usize,
+    #[clap(short = 'm')]
+    pub num_nodes_m: usize,
+    #[clap(short = 't')]
+    pub threshold_t: usize,
+    #[clap(short = 'p')]
+    pub threshold_t_prime: usize,
 }

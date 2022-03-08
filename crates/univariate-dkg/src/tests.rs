@@ -10,26 +10,26 @@ use crate::dkg::*;
 
 #[test]
 fn run_11_node_dkg() {
-    let dealings: Vec<Dealing> = (0..11).map(|_| generate_shares(11, 5)).collect();
+    // let dealings: Vec<Dealing> = (0..11).map(|_| generate_shares(11, 5)).collect();
 
-    let public_coefficients = dealings
-        .iter()
-        .fold(PublicCoefficients::zero(), |acc, dealing| {
-            acc.add(dealing.0.clone())
-        });
-    let msg = rand::random::<[u8; 32]>();
+    // let public_coefficients = dealings
+    //     .iter()
+    //     .fold(PublicCoefficients::zero(), |acc, dealing| {
+    //         acc.add(dealing.0.clone())
+    //     });
+    // let msg = rand::random::<[u8; 32]>();
 
-    let mut signatures = Vec::new();
-    for i in 0..11 {
-        // This continually recalculates the public coefficients, so it shouldn't be used for benchmarking
-        let (_, sk) = combine_dealings(i, &dealings);
-        let pk = get_public_key(i, &public_coefficients);
-        signatures.push(sign_message(&msg, &sk));
-        verify_individual_sig(&msg, signatures[i], pk).unwrap();
-    }
+    // let mut signatures = Vec::new();
+    // for i in 0..11 {
+    //     // This continually recalculates the public coefficients, so it shouldn't be used for benchmarking
+    //     let (_, sk) = combine_dealings(i, &dealings);
+    //     let pk = get_public_key(i, &public_coefficients);
+    //     signatures.push(sign_message(&msg, &sk));
+    //     verify_individual_sig(&msg, signatures[i], pk).unwrap();
+    // }
 
-    let sig = combine_signatures(signatures.as_slice(), 5).unwrap();
-    verify_combined_sig(&msg, sig, combined_public_key(&public_coefficients)).unwrap();
+    // let sig = combine_signatures(signatures.as_slice(), 5).unwrap();
+    // verify_combined_sig(&msg, sig, combined_public_key(&public_coefficients)).unwrap();
 }
 
 #[test]

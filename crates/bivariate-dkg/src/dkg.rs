@@ -1,4 +1,4 @@
-use std::ops::Add;
+use std::{collections::BTreeMap, ops::Add};
 
 use bls12_381::{G1Projective, Scalar};
 use ic_crypto_internal_threshold_sig_bls12381::crypto::x_for_index;
@@ -37,17 +37,17 @@ pub fn combine_dealings(
     )
 }
 
-pub fn combine_signatures(signatures: &[G1Projective], t: usize) -> Result<G1Projective, String> {
+pub fn combine_signatures(
+    signatures: &BTreeMap<usize, G1Projective>,
+    t: usize,
+) -> Result<G1Projective, String> {
     if signatures.len() < t {
         return Err("Invalid Threshold".to_string());
     }
 
     let signatures: Vec<(Scalar, G1Projective)> = signatures
         .iter()
-        .zip(0_u32..)
-        .filter_map(|(signature, index)| {
-            Some(*signature).map(|signature| (x_for_index(index), signature))
-        })
+        .map(|(k, v)| (x_for_index(*k as u32), *v))
         .collect();
     Ok(PublicCoefficients::interpolate_g1(&signatures).expect("Duplicate indices"))
 }

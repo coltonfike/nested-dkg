@@ -1,5 +1,5 @@
 use bls12_381::{G1Projective, G2Affine, G2Projective, Scalar};
-use group::GroupEncoding;
+use group::Curve;
 use ic_crypto_internal_bls12381_common::random_bls12_381_scalar;
 use ic_crypto_internal_threshold_sig_bls12381::{
     crypto::{public_key_from_secret_key, x_for_index},
@@ -70,6 +70,7 @@ pub struct PublicCoefficients {
 }
 
 impl PublicCoefficients {
+    // TODO: make this auto add 1 and convert to scalar for each x and y
     pub fn evaluate_at(&self, x: &Scalar, y: &Scalar) -> G2Projective {
         let mut ans = self.coefficients[0][0].0;
         for (i, vec) in self.coefficients.clone().iter().enumerate() {
@@ -174,7 +175,14 @@ impl Dealing {
                 .flat_map(|coefficient| {
                     coefficient
                         .iter()
-                        .flat_map(|coefficient| coefficient.0.to_bytes().as_ref().to_vec())
+                        .flat_map(|coefficient| {
+                            coefficient
+                                .0
+                                .to_affine()
+                                .to_uncompressed()
+                                .as_ref()
+                                .to_vec()
+                        })
                         .collect::<Vec<u8>>()
                 })
                 .collect(),
@@ -198,29 +206,18 @@ impl Dealing {
     ) -> Self {
         Dealing(
             PublicCoefficients {
-                coefficients: coefficients.chunks_exact(96).map(|chunk| {
-                        PublicKey(G2Projective::from(&G2Affine::from_compressed(chunk.try_into().unwrap()).unwrap()))
-                    }).collect::<Vec<PublicKey>>()
+                coefficients: coefficients
+                    .chunks_exact(192)
+                    .map(|chunk| {
+                        PublicKey(G2Projective::from(
+                            &G2Affine::from_uncompressed_unchecked(chunk.try_into().unwrap())
+                                .unwrap(),
+                        ))
+                    })
+                    .collect::<Vec<PublicKey>>()
                     .chunks_exact(t_prime)
                     .map(|chunk| chunk.to_vec())
-                    .collect()
-                // coefficients: coefficients
-                //     .iter()
-                //     .fold(Vec::new(), |mut acc, coefficient| {
-                //         acc.push(coefficient.iter().fold(Vec::new(), |mut acc, coefficient| {
-                //             acc.push(PublicKey(G2Projective::from(
-                //                 &G2Affine::from_compressed(
-                //                     coefficient
-                //                         .as_slice()
-                //                         .try_into()
-                //                         .expect("Slice for PublicCoefficient is not len 96"),
-                //                 )
-                //                 .unwrap(), // unwrap since CtOption doesn't have expect
-                //             )));
-                //             acc
-                //         }));
-                //         acc
-                //     }),
+                    .collect(),
             },
             scalars
                 .chunks_exact(32)
@@ -229,21 +226,6 @@ impl Dealing {
                 .chunks_exact(group_size)
                 .map(|chunk| chunk.to_vec())
                 .collect(),
-            // scalars.iter().fold(Vec::new(), |mut acc, scalar| {
-            //     acc.push(scalar.iter().fold(Vec::new(), |mut acc, scalar| {
-            //         acc.push(
-            //             Scalar::from_bytes(
-            //                 scalar
-            //                     .as_slice()
-            //                     .try_into()
-            //                     .expect("Slice for Scalar is not len 32"),
-            //             )
-            //             .unwrap(), // unwrap since CtOption doesn't have expect
-            //         );
-            //         acc
-            //     }));
-            //     acc
-            // }),
         )
     }
 }
