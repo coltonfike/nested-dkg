@@ -1184,6 +1184,7 @@ version = "0.1.0"
 dependencies = [
  "bivariate-dkg",
  "clap",
+ "nidkg",
  "tokio",
  "types",
  "univariate-dkg",
@@ -1265,6 +1266,22 @@ name = "new_debug_unreachable"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e4a24736216ec316047a1fc4252e27dabb04218aa4a3f37c6e7ddbf1f9782b54"
+
+[[package]]
+name = "nidkg"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "ic-crypto-internal-threshold-sig-bls12381",
+ "ic-crypto-internal-types",
+ "ic-types 0.8.0",
+ "networking",
+ "rand 0.7.3",
+ "rand_chacha 0.2.2",
+ "rand_core 0.5.1",
+ "tokio-stream",
+ "types",
+]
 
 [[package]]
 name = "nix"

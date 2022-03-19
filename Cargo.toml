@@ -5,6 +5,7 @@ members = [
     "crates/univariate-dkg",
     "crates/bivariate-dkg",
     "crates/types",
+    "crates/nidkg"
 ]
 
 [profile.release]
