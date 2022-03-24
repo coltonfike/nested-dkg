@@ -1,4 +1,8 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+};
 
 use crate::dkg::{combine_dealings, combine_signatures, generate_shares, get_public_key};
 
@@ -34,6 +38,15 @@ pub async fn run_local_threshold_signature(my_id: usize, n: u32, t: usize) {
         port += 1;
     }
 
+    run_single_node_threshold_signature(my_id, n, t, addresses).await;
+}
+
+pub async fn run_aws_threshold_signature(my_id: usize, n: u32, t: usize) {
+    let mut addresses = BTreeMap::new();
+    let reader = BufReader::new(File::open("addresses").unwrap());
+    for (i, line) in reader.lines().enumerate() {
+        addresses.insert(Id::Univariate(i), line.unwrap());
+    }
     run_single_node_threshold_signature(my_id, n, t, addresses).await;
 }
 
@@ -110,6 +123,16 @@ async fn run_single_node_threshold_signature(
     std::thread::sleep(std::time::Duration::from_secs(1));
     node.shutdown();
     println!("total_time: {:?}", total_time);
+
+    let filename = format!("results/univariate_threshold_signatures_{}_{}", n, t);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(filename)
+        .unwrap();
+    file.write_all(format!("{:?}\n", total_time).as_bytes())
+        .unwrap();
 }
 
 pub async fn run_local_dkg(my_id: usize, n: u32, t: usize) {

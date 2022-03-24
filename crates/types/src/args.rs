@@ -95,6 +95,8 @@ pub struct UnivariateThresholdSignatureArgs {
     pub num_nodes_n: usize,
     #[clap(short = 't')]
     pub threshold: usize,
+    #[clap(short = 'a')]
+    pub aws: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]
