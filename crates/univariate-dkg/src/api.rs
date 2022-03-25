@@ -13,11 +13,14 @@ use ic_crypto_internal_threshold_sig_bls12381::{
     types::PublicKey,
 };
 use networking::Node;
+use rand::RngCore;
 use tokio_stream::StreamExt;
 use types::{
     univariate::{Dealing, Message},
     Id,
 };
+
+const NUM_THREADS: u32 = 4;
 
 pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     let dealing = generate_shares(nodes, threshold);
@@ -27,6 +30,15 @@ pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
         bincode::serialize(&dealing.serialize()).unwrap(),
     )
     .unwrap();
+
+    let messages: Vec<Vec<u8>> = (0..100)
+        .map(|_| {
+            let mut msg: [u8; 64] = [0; 64];
+            rand::thread_rng().fill_bytes(&mut msg);
+            msg.to_vec()
+        })
+        .collect();
+    std::fs::write("messages", bincode::serialize(&messages).unwrap()).unwrap();
 }
 
 pub async fn run_local_threshold_signature(my_id: usize, n: u32, t: usize) {
@@ -56,18 +68,15 @@ async fn run_single_node_threshold_signature(
     t: usize,
     addresses: BTreeMap<Id, String>,
 ) {
-    let msg: [u8; 32] = [0; 32];
-
-    let ids = addresses
-        .iter()
-        .filter_map(|(id, _)| {
-            if Id::Univariate(my_id) == *id {
-                None
-            } else {
-                Some(*id)
-            }
-        })
-        .collect::<Vec<Id>>();
+    let messages: Vec<[u8; 64]> = {
+        let messages: Vec<Vec<u8>> =
+            bincode::deserialize(&std::fs::read("messages").expect("failed to read message file"))
+                .expect("unable to deserialize file");
+        messages
+            .iter()
+            .map(|v| v.clone().try_into().unwrap())
+            .collect()
+    };
 
     let dealing: (Vec<Vec<u8>>, Vec<Vec<u8>>) = bincode::deserialize(
         &std::fs::read("univariate_shares").expect("unable to read share file"),
@@ -75,56 +84,74 @@ async fn run_single_node_threshold_signature(
     .expect("unable to deserialize file");
     let dealing = Dealing::deserialize(dealing.0, dealing.1);
 
-    let pk = get_public_key(my_id, &dealing.0);
-
-    let sk = dealing.1[my_id];
-    let whole_pk = dealing.0.evaluate_at(&Scalar::zero());
-
-    let mut partial_sigs = BTreeMap::new();
-
-    let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
-
-    let time = std::time::Instant::now();
-
-    let my_sig = sign_message(&msg, &sk);
-
-    node.broadcast(&my_sig.to_affine().to_uncompressed(), ids)
-        .await;
-
-    partial_sigs.insert(my_id, my_sig);
-
-    while partial_sigs.len() < t {
-        let (id, share) = node.recv.next().await.expect("failed to read message");
-        let sig = G1Projective::from(
-            G1Affine::from_uncompressed_unchecked(&share.try_into().unwrap()).unwrap(),
-        );
-
-        match id {
-            Id::Univariate(i) => {
-                verify_individual_sig(&msg, sig, get_public_key(i, &dealing.0)).unwrap();
-                partial_sigs.insert(i, sig);
-            }
-            _ => (),
+    if my_id == n as usize {
+        let mut signatures = BTreeMap::new();
+        for (i, _) in messages.iter().enumerate() {
+            signatures.insert(i, BTreeMap::new());
         }
+        let whole_pk = dealing.0.evaluate_at(&Scalar::zero());
+
+        let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
+
+        let time = std::time::Instant::now();
+
+        while signatures.len() > 0 {
+            let (id, share) = node.recv.next().await.expect("failed to read message");
+            let (msg, share): (usize, Vec<u8>) = bincode::deserialize(&share).unwrap();
+            let sig = G1Projective::from(
+                G1Affine::from_uncompressed_unchecked(&share.try_into().unwrap()).unwrap(),
+            );
+
+            match id {
+                Id::Univariate(i) => {
+                    if signatures.contains_key(&msg) {
+                        verify_individual_sig(&messages[msg], sig, get_public_key(i, &dealing.0))
+                            .unwrap();
+                        let group = signatures.get_mut(&msg).unwrap();
+                        group.insert(i, sig);
+                        if group.len() >= t {
+                            let group_sig = combine_signatures(group, t as usize).unwrap();
+                            verify_combined_sig(&messages[msg], group_sig, PublicKey(whole_pk))
+                                .unwrap();
+                            signatures.remove(&msg);
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+
+        let total_time = time.elapsed();
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        node.shutdown();
+        println!("total_time: {:?}", total_time);
+
+        let filename = format!("results/univariate_threshold_signatures_{}_{}", n, t);
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .append(true)
+            .create(true)
+            .open(filename)
+            .unwrap();
+        file.write_all(format!("{:?}\n", total_time).as_bytes())
+            .unwrap();
+    } else {
+        let ids = vec![Id::Univariate(n as usize)];
+
+        let sk = dealing.1[my_id];
+
+        let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
+
+        for (i, msg) in messages.iter().enumerate() {
+            let my_sig = sign_message(msg, &sk);
+            let to_send = (i, &my_sig.to_affine().to_uncompressed().to_vec());
+
+            node.broadcast(&bincode::serialize(&to_send).unwrap(), ids.clone())
+                .await;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        node.shutdown();
     }
-
-    let group_sig = combine_signatures(&partial_sigs, t as usize).unwrap();
-    verify_combined_sig(&msg, group_sig, PublicKey(whole_pk)).unwrap();
-
-    let total_time = time.elapsed();
-    std::thread::sleep(std::time::Duration::from_secs(1));
-    node.shutdown();
-    println!("total_time: {:?}", total_time);
-
-    let filename = format!("results/univariate_threshold_signatures_{}_{}", n, t);
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .append(true)
-        .create(true)
-        .open(filename)
-        .unwrap();
-    file.write_all(format!("{:?}\n", total_time).as_bytes())
-        .unwrap();
 }
 
 pub async fn run_local_dkg(my_id: usize, n: u32, t: usize) {
