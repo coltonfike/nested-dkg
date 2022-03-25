@@ -40,12 +40,21 @@ pub fn generate_keypairs(args: NiDKGKeyPairsArgs) {
 }
 
 pub async fn univariate_threshold_signature(args: UnivariateThresholdSignatureArgs) {
-    univariate::api::run_local_threshold_signature(
-        args.node_index,
-        args.num_nodes_n as u32,
-        args.threshold,
-    )
-    .await;
+    if !args.aws {
+        univariate::api::run_local_threshold_signature(
+            args.node_index,
+            args.num_nodes_n as u32,
+            args.threshold,
+        )
+        .await;
+    } else {
+        univariate::api::run_aws_threshold_signature(
+            args.node_index,
+            args.num_nodes_n as u32,
+            args.threshold,
+        )
+        .await;
+    }
 }
 
 pub async fn bivariate_threshold_signature(args: BivariateThresholdSignatureArgs) {

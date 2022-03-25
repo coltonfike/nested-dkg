@@ -9,7 +9,7 @@ use crate::dkg::{combine_dealings, combine_signatures, generate_shares, get_publ
 use bls12_381::{G1Affine, G1Projective, Scalar};
 use group::Curve;
 use ic_crypto_internal_threshold_sig_bls12381::{
-    crypto::{sign_message, verify_combined_sig},
+    crypto::{sign_message, verify_combined_sig, verify_individual_sig},
     types::PublicKey,
 };
 use networking::Node;
@@ -87,7 +87,6 @@ async fn run_single_node_threshold_signature(
     let time = std::time::Instant::now();
 
     let my_sig = sign_message(&msg, &sk);
-    // verify_individual_sig(&msg, my_sig, pk).unwrap();
 
     node.broadcast(&my_sig.to_affine().to_uncompressed(), ids)
         .await;
@@ -102,13 +101,7 @@ async fn run_single_node_threshold_signature(
 
         match id {
             Id::Univariate(i) => {
-                // TODO: Should we verify it?
-                // verify_individual_sig(
-                //     &msg,
-                //     sig,
-                //     dealing.0.individual_public_key((i as u32, j as u32)),
-                // )
-                // .unwrap();
+                verify_individual_sig(&msg, sig, get_public_key(i, &dealing.0)).unwrap();
                 partial_sigs.insert(i, sig);
             }
             _ => (),
@@ -116,7 +109,6 @@ async fn run_single_node_threshold_signature(
     }
 
     let group_sig = combine_signatures(&partial_sigs, t as usize).unwrap();
-    // TODO: Should we verify it?
     verify_combined_sig(&msg, group_sig, PublicKey(whole_pk)).unwrap();
 
     let total_time = time.elapsed();
