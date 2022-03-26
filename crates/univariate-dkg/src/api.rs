@@ -20,7 +20,7 @@ use types::{
     Id,
 };
 
-const NUM_THREADS: u32 = 4;
+const NUM_THREADS: u32 = 16;
 
 pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     let dealing = generate_shares(nodes, threshold);
@@ -31,7 +31,7 @@ pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     )
     .unwrap();
 
-    let messages: Vec<Vec<u8>> = (0..100)
+    let messages: Vec<Vec<u8>> = (0..10000)
         .map(|_| {
             let mut msg: [u8; 64] = [0; 64];
             rand::thread_rng().fill_bytes(&mut msg);
@@ -85,46 +85,111 @@ async fn run_single_node_threshold_signature(
     let dealing = Dealing::deserialize(dealing.0, dealing.1);
 
     if my_id == n as usize {
-        let mut signatures = BTreeMap::new();
-        for (i, _) in messages.iter().enumerate() {
-            signatures.insert(i, BTreeMap::new());
-        }
         let whole_pk = dealing.0.evaluate_at(&Scalar::zero());
 
         let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
 
-        let time = std::time::Instant::now();
+        let mut threads: Vec<std::sync::mpsc::SyncSender<(Id, usize, Vec<u8>)>> = Vec::new();
 
-        while signatures.len() > 0 {
-            let (id, share) = node.recv.next().await.expect("failed to read message");
-            let (msg, share): (usize, Vec<u8>) = bincode::deserialize(&share).unwrap();
-            let sig = G1Projective::from(
-                G1Affine::from_uncompressed_unchecked(&share.try_into().unwrap()).unwrap(),
-            );
+        let (ts, signal) = std::sync::mpsc::sync_channel(NUM_THREADS as usize);
 
-            match id {
-                Id::Univariate(i) => {
-                    if signatures.contains_key(&msg) {
-                        verify_individual_sig(&messages[msg], sig, get_public_key(i, &dealing.0))
-                            .unwrap();
-                        let group = signatures.get_mut(&msg).unwrap();
-                        group.insert(i, sig);
-                        if group.len() >= t {
-                            let group_sig = combine_signatures(group, t as usize).unwrap();
-                            verify_combined_sig(&messages[msg], group_sig, PublicKey(whole_pk))
+        let range_size = messages.len() / NUM_THREADS as usize;
+        let mut idx = 0;
+
+        for i in 0..NUM_THREADS {
+            let thread_messages = if i == NUM_THREADS - 1 {
+                messages[idx..].to_vec()
+            } else {
+                messages[idx..idx + range_size].to_vec()
+            };
+            let thread_dealing = dealing.clone();
+
+            let (tx, rx) = std::sync::mpsc::sync_channel(messages.len() * n as usize);
+            let thread_signal = ts.clone();
+            threads.push(tx);
+
+            std::thread::spawn(move || {
+                let mut signatures = BTreeMap::new();
+                for (i, _) in thread_messages.iter().enumerate() {
+                    signatures.insert(i, BTreeMap::new());
+                }
+
+                while signatures.len() > 0 {
+                    let (id, msg, share) = rx.recv().unwrap();
+
+                    let sig = G1Projective::from(
+                        G1Affine::from_uncompressed_unchecked(&share.try_into().unwrap()).unwrap(),
+                    );
+
+                    match id {
+                        Id::Univariate(i) => {
+                            if signatures.contains_key(&msg) {
+                                verify_individual_sig(
+                                    &thread_messages[msg],
+                                    sig,
+                                    get_public_key(i, &thread_dealing.0),
+                                )
                                 .unwrap();
-                            signatures.remove(&msg);
+                                let group = signatures.get_mut(&msg).unwrap();
+                                group.insert(i, sig);
+                                if group.len() >= t {
+                                    let group_sig = combine_signatures(group, t as usize).unwrap();
+                                    verify_combined_sig(
+                                        &thread_messages[msg],
+                                        group_sig,
+                                        PublicKey(whole_pk),
+                                    )
+                                    .unwrap();
+                                    signatures.remove(&msg);
+                                }
+                            }
                         }
+                        _ => (),
                     }
                 }
-                _ => (),
+                thread_signal.send(0).unwrap();
+            });
+            idx += range_size;
+        }
+
+        let mut signals = 0;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
+        let time = std::time::Instant::now();
+
+        while signals < NUM_THREADS {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if signal.try_recv().is_ok() {
+                        signals += 1;
+                        continue;
+                    }
+                }
+                msg = node.recv.next() => {
+                    let (id, share) = msg.unwrap();
+                    let (msg, share): (usize, Vec<u8>) = bincode::deserialize(&share).unwrap();
+
+                    let mut idx = 0;
+                    for i in 0..NUM_THREADS {
+                        if msg < idx + range_size {
+                            threads[i as usize]
+                                .send((id, msg - (i as usize * range_size), share))
+                                .map_err(|_| ())
+                                .unwrap();
+                            break;
+                        }
+                        idx += range_size;
+                    }
+                }
             }
         }
 
         let total_time = time.elapsed();
         std::thread::sleep(std::time::Duration::from_secs(1));
         node.shutdown();
-        println!("total_time: {:?}", total_time);
+        println!(
+            "total_time: {:?}",
+            total_time.as_secs_f64()
+        );
 
         let filename = format!("results/univariate_threshold_signatures_{}_{}", n, t);
         let mut file = std::fs::OpenOptions::new()
@@ -133,7 +198,7 @@ async fn run_single_node_threshold_signature(
             .create(true)
             .open(filename)
             .unwrap();
-        file.write_all(format!("{:?}\n", total_time).as_bytes())
+        file.write_all(format!("{:?}\n", total_time.as_secs_f64()).as_bytes())
             .unwrap();
     } else {
         let ids = vec![Id::Univariate(n as usize)];

@@ -8,6 +8,7 @@ pub enum Message {
     Shares(Vec<Vec<u8>>, Vec<Vec<u8>>),
 }
 
+#[derive(Clone)]
 pub struct Dealing(pub PublicCoefficients, pub Vec<Scalar>);
 
 impl Dealing {
