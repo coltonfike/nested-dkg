@@ -24,7 +24,9 @@ impl Node {
     pub async fn new(addresses: BTreeMap<Id, String>, my_id: Id) -> Node {
         let mut connect_to = BTreeMap::new();
         let mut to_connect = BTreeSet::new();
-        let my_addr = addresses.get(&my_id).unwrap().clone();
+        let addr = addresses.get(&my_id).unwrap().clone();
+        let mut my_addr = "0.0.0.0:".to_string();
+        my_addr.push_str(addr.split(":").collect::<Vec<_>>()[1]);
 
         for (id, addr) in addresses {
             if my_id < id {
