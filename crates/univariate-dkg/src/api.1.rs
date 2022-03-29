@@ -1,3 +1,4 @@
+use num::bigint::Sign;
 use num::BigInt;
 use std::{
     collections::BTreeMap,
@@ -7,14 +8,14 @@ use std::{
 
 use crate::dkg::{combine_dealings, combine_signatures, generate_shares, get_public_key};
 
-use bls12_381::{G1Affine, G1Projective, G2Affine, G2Projective, Scalar};
+use bls12_381::{G1Affine, G1Projective, G2Projective, Scalar};
 use group::Curve;
 use ic_crypto_internal_threshold_sig_bls12381::{
     crypto::{sign_message, verify_combined_sig, verify_individual_sig},
     types::PublicKey,
 };
 use networking::Node;
-use rand::{prelude::SliceRandom, RngCore};
+use rand::RngCore;
 use tokio_stream::StreamExt;
 use types::{
     univariate::{Dealing, Message},
@@ -46,7 +47,7 @@ pub async fn run_local_threshold_signature(my_id: usize, n: u32, t: usize) {
     let mut addresses = BTreeMap::new();
     let mut port = 30000;
 
-    for i in 0..=n {
+    for i in 0..n {
         addresses.insert(Id::Univariate(i as usize), format!("127.0.0.1:{}", port));
         port += 1;
     }
@@ -79,46 +80,16 @@ async fn run_single_node_threshold_signature(
             .collect()
     };
 
-    if my_id == n as usize {
-        let ids = addresses
-            .iter()
-            .filter_map(|(id, _)| {
-                if Id::Univariate(my_id) == *id {
-                    None
-                } else {
-                    Some(*id)
-                }
-            })
-            .collect::<Vec<Id>>();
+    let dealing: (Vec<Vec<u8>>, Vec<Vec<u8>>) = bincode::deserialize(
+        &std::fs::read("univariate_shares").expect("unable to read share file"),
+    )
+    .expect("unable to deserialize file");
+    let dealing = Dealing::deserialize(dealing.0, dealing.1);
 
-        let mut pks = BTreeMap::new();
+    if my_id == n as usize {
+        let whole_pk = dealing.0.evaluate_at(&Scalar::zero());
 
         let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
-
-        for _ in 0..n {
-            let (id, msg) = node.recv.next().await.unwrap();
-            let pk = G2Projective::from(
-                G2Affine::from_uncompressed_unchecked(&msg.try_into().unwrap()).unwrap(),
-            );
-
-            pks.insert(id, PublicKey(pk));
-        }
-
-        let lambda: Vec<Scalar> = {
-            let v = vec![Scalar::one().neg(), Scalar::one()];
-            (0..n)
-                .map(|_| *v.choose(&mut rand::thread_rng()).unwrap())
-                .collect()
-        };
-
-        let whole_pk = PublicKey(
-            pks.iter()
-                .zip(lambda.iter())
-                .map(|((_, v), lambda)| v.0 * lambda)
-                .sum(),
-        );
-
-        node.broadcast(&[0; 1], ids).await;
 
         let mut threads: Vec<std::sync::mpsc::SyncSender<(Id, usize, Vec<u8>)>> = Vec::new();
 
@@ -133,9 +104,8 @@ async fn run_single_node_threshold_signature(
             } else {
                 messages[idx..idx + range_size].to_vec()
             };
+            let thread_dealing = dealing.clone();
 
-            let lam = lambda.clone();
-            let thread_pks = pks.clone();
             let (tx, rx) = std::sync::mpsc::sync_channel(messages.len() * n as usize);
             let thread_signal = ts.clone();
             threads.push(tx);
@@ -156,18 +126,22 @@ async fn run_single_node_threshold_signature(
                     match id {
                         Id::Univariate(i) => {
                             if signatures.contains_key(&msg) {
-                                verify_individual_sig(&thread_messages[msg], sig, thread_pks[&id])
-                                    .unwrap();
+                                verify_individual_sig(
+                                    &thread_messages[msg],
+                                    sig,
+                                    get_public_key(i, &thread_dealing.0),
+                                )
+                                .unwrap();
                                 let group = signatures.get_mut(&msg).unwrap();
                                 group.insert(i, sig);
-                                if group.len() >= n as usize {
-                                    let group_sig = signatures[&msg]
-                                        .iter()
-                                        .zip(lam.iter())
-                                        .map(|((_, v), lambda)| v * lambda)
-                                        .sum();
-                                    verify_combined_sig(&thread_messages[msg], group_sig, whole_pk)
-                                        .unwrap();
+                                if group.len() >= t {
+                                    let group_sig = combine_signatures(group, t as usize).unwrap();
+                                    verify_combined_sig(
+                                        &thread_messages[msg],
+                                        group_sig,
+                                        PublicKey(whole_pk),
+                                    )
+                                    .unwrap();
                                     signatures.remove(&msg);
                                 }
                             }
@@ -228,14 +202,9 @@ async fn run_single_node_threshold_signature(
     } else {
         let ids = vec![Id::Univariate(n as usize)];
 
-        let (sk, pk) = prf_keygen();
+        let sk = dealing.1[my_id];
 
         let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
-
-        node.broadcast(&pk.0.to_affine().to_uncompressed().to_vec(), ids.clone())
-            .await;
-
-        node.recv.next().await.unwrap();
 
         for (i, msg) in messages.iter().enumerate() {
             let my_sig = sign_message(msg, &sk);
