@@ -23,7 +23,9 @@ use types::{
     Id,
 };
 
-const NUM_THREADS: usize = 5;
+use std::sync::{Arc,Mutex};
+
+const NUM_THREADS: usize = 20;
 
 pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     let dealing = generate_shares(nodes, threshold);
@@ -34,7 +36,7 @@ pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     )
     .unwrap();
 
-    let messages: Vec<Vec<u8>> = (0..100)
+    let messages: Vec<Vec<u8>> = (0..1000)
         .map(|_| {
             let mut msg: [u8; 64] = [0; 64];
             rand::thread_rng().fill_bytes(&mut msg);
@@ -81,7 +83,7 @@ async fn run_single_node_threshold_signature(
             .collect()
     };
 
-    let client_input: Vec<String> = (0..100)
+    let client_input: Vec<String> = (0..1000)
         .map(|i| "colton".to_string() + &i.to_string())
         .collect();
 
@@ -105,6 +107,8 @@ async fn run_single_node_threshold_signature(
         let mut threads: Vec<std::sync::mpsc::SyncSender<(Id, usize, Vec<u8>, Vec<u8>)>> =
             Vec::new();
 
+        let aggregate_timings = Arc::new(Mutex::new(Vec::new()));
+
         let range_size = messages.len() / NUM_THREADS as usize;
         let mut idx = 0;
 
@@ -118,6 +122,8 @@ async fn run_single_node_threshold_signature(
             let (tx, rx) = std::sync::mpsc::sync_channel(messages.len() * n as usize);
             let thread_signal = ts.clone();
             threads.push(tx);
+
+            let thread_timings = aggregate_timings.clone();
 
             threadpool.execute(move || {
                 let mut signatures = BTreeMap::new();
@@ -184,15 +190,8 @@ async fn run_single_node_threshold_signature(
                         _ => (),
                     }
                 }
-                let filename = format!("results/prf_signatures_aggregator_{}", n);
-                let mut file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .append(true)
-                    .create(true)
-                    .open(filename)
-                    .unwrap();
-                file.write_all(format!("{:?}\n", combine_time / thread_messages.len() as f64).as_bytes())
-                    .unwrap();
+
+                thread_timings.lock().unwrap().push(combine_time);
 
                 thread_signal.send(0).unwrap();
             });
@@ -229,9 +228,19 @@ async fn run_single_node_threshold_signature(
             }
         }
 
-        let total_time = time.elapsed();
+        let total_time = time.elapsed().as_secs_f64();
         std::thread::sleep(std::time::Duration::from_secs(1));
         node.shutdown();
+        let avg_aggregate = aggregate_timings.lock().unwrap().iter().sum::<f64>() / 1000f64;
+        let filename = format!("results/prf_signatures_aggregator_{}", n);
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .create(true)
+                    .open(filename)
+                    .unwrap();
+                file.write_all(format!("{:?},{:?}\n", total_time, avg_aggregate).as_bytes())
+                    .unwrap();
         println!("Finished!");
     } else {
         let ids = vec![Id::Univariate(n as usize)];
@@ -242,6 +251,9 @@ async fn run_single_node_threshold_signature(
         let mut idx = 0;
         let (ts, signal) = std::sync::mpsc::sync_channel(NUM_THREADS * 100 as usize);
         let (tx, rx) = std::sync::mpsc::sync_channel(NUM_THREADS * 100 as usize);
+
+        let prf_timings = Arc::new(Mutex::new(Vec::new()));
+        let sign_timings = Arc::new(Mutex::new(Vec::new()));
 
         for i in 0..NUM_THREADS {
             let thread_messages = if i == NUM_THREADS - 1 {
@@ -260,6 +272,9 @@ async fn run_single_node_threshold_signature(
             let thread_tx = tx.clone();
 
             let thread_id = i;
+
+            let thread_prf = prf_timings.clone();
+            let thread_sign = sign_timings.clone();
 
             threadpool.execute(move || {
 
@@ -289,15 +304,8 @@ async fn run_single_node_threshold_signature(
                 }
                 thread_signal.send(0).unwrap();
 
-                let filename = format!("results/prf_signatures_{}_{}", n, thread_id);
-                let mut file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .append(true)
-                    .create(true)
-                    .open(filename)
-                    .unwrap();
-                file.write_all(format!("{:?},{:?}\n", prf_time / inputs.len() as f64, sign_time / inputs.len() as f64).as_bytes())
-                    .unwrap();
+                thread_prf.lock().unwrap().push(prf_time);
+                thread_sign.lock().unwrap().push(sign_time);
             });
 
             idx += range_size;
@@ -320,8 +328,22 @@ async fn run_single_node_threshold_signature(
             }
         }
 
+        let total_time = time.elapsed().as_secs_f64();
         std::thread::sleep(std::time::Duration::from_secs(1));
         node.shutdown();
+
+        let avg_prf: f64 = prf_timings.lock().unwrap().iter().sum::<f64>() / 1000f64;
+        let avg_sign: f64 = sign_timings.lock().unwrap().iter().sum::<f64>() / 1000f64;
+
+        let filename = format!("results/prf_signatures_{}", n);
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .create(true)
+                    .open(filename)
+                    .unwrap();
+                file.write_all(format!("{:?},{:?},{:?}\n", total_time, avg_prf, avg_sign).as_bytes())
+                    .unwrap();
     }
 }
 
