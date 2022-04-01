@@ -8,5 +8,5 @@ addrs=(ubuntu@13.59.162.225 ubuntu@18.224.190.229 ubuntu@18.218.212.190 ubuntu@3
 for ((i=0; i<=$N; i++))
 do
     addr=${addrs[$((i%10))]}
-    echo ssh $addr "cd nested-dkg; ./target/release/main univariate-threshold-signature -i $i -n $n -t $t -a &" &
+    ssh $addr "cd nested-dkg; ./target/release/main univariate-threshold-signature -i $i -n $N -t $T -a &" &
 done

@@ -14,14 +14,16 @@ use ic_crypto_internal_threshold_sig_bls12381::{
     types::PublicKey,
 };
 use networking::Node;
+use rand;
 use rand::{prelude::SliceRandom, RngCore};
+use threadpool;
 use tokio_stream::StreamExt;
 use types::{
     univariate::{Dealing, Message},
     Id,
 };
 
-const NUM_THREADS: u32 = 16;
+const NUM_THREADS: usize = 5;
 
 pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     let dealing = generate_shares(nodes, threshold);
@@ -32,7 +34,7 @@ pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     )
     .unwrap();
 
-    let messages: Vec<Vec<u8>> = (0..10000)
+    let messages: Vec<Vec<u8>> = (0..100)
         .map(|_| {
             let mut msg: [u8; 64] = [0; 64];
             rand::thread_rng().fill_bytes(&mut msg);
@@ -79,6 +81,12 @@ async fn run_single_node_threshold_signature(
             .collect()
     };
 
+    let client_input: Vec<String> = (0..100)
+        .map(|i| "colton".to_string() + &i.to_string())
+        .collect();
+
+    let threadpool = threadpool::ThreadPool::new(NUM_THREADS);
+
     if my_id == n as usize {
         let ids = addresses
             .iter()
@@ -91,38 +99,11 @@ async fn run_single_node_threshold_signature(
             })
             .collect::<Vec<Id>>();
 
-        let mut pks = BTreeMap::new();
-
         let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
 
-        for _ in 0..n {
-            let (id, msg) = node.recv.next().await.unwrap();
-            let pk = G2Projective::from(
-                G2Affine::from_uncompressed_unchecked(&msg.try_into().unwrap()).unwrap(),
-            );
-
-            pks.insert(id, PublicKey(pk));
-        }
-
-        let lambda: Vec<Scalar> = {
-            let v = vec![Scalar::one().neg(), Scalar::one()];
-            (0..n)
-                .map(|_| *v.choose(&mut rand::thread_rng()).unwrap())
-                .collect()
-        };
-
-        let whole_pk = PublicKey(
-            pks.iter()
-                .zip(lambda.iter())
-                .map(|((_, v), lambda)| v.0 * lambda)
-                .sum(),
-        );
-
-        node.broadcast(&[0; 1], ids).await;
-
-        let mut threads: Vec<std::sync::mpsc::SyncSender<(Id, usize, Vec<u8>)>> = Vec::new();
-
         let (ts, signal) = std::sync::mpsc::sync_channel(NUM_THREADS as usize);
+        let mut threads: Vec<std::sync::mpsc::SyncSender<(Id, usize, Vec<u8>, Vec<u8>)>> =
+            Vec::new();
 
         let range_size = messages.len() / NUM_THREADS as usize;
         let mut idx = 0;
@@ -134,40 +115,68 @@ async fn run_single_node_threshold_signature(
                 messages[idx..idx + range_size].to_vec()
             };
 
-            let lam = lambda.clone();
-            let thread_pks = pks.clone();
             let (tx, rx) = std::sync::mpsc::sync_channel(messages.len() * n as usize);
             let thread_signal = ts.clone();
             threads.push(tx);
 
-            std::thread::spawn(move || {
+            threadpool.execute(move || {
                 let mut signatures = BTreeMap::new();
                 for (i, _) in thread_messages.iter().enumerate() {
                     signatures.insert(i, BTreeMap::new());
                 }
 
+                let mut pk_i = BTreeMap::new();
+                for (i, _) in thread_messages.iter().enumerate() {
+                    pk_i.insert(i, BTreeMap::new());
+                }
+                let mut combine_time = 0f64;
+
                 while signatures.len() > 0 {
-                    let (id, msg, share) = rx.recv().unwrap();
+                    let (id, msg, share, pk) = rx.recv().unwrap();
 
                     let sig = G1Projective::from(
                         G1Affine::from_uncompressed_unchecked(&share.try_into().unwrap()).unwrap(),
                     );
 
+                    let pk = G2Projective::from(
+                        G2Affine::from_uncompressed_unchecked(&pk.try_into().unwrap()).unwrap(),
+                    );
+
+                    let pks = pk_i.get_mut(&msg).unwrap();
+
                     match id {
                         Id::Univariate(i) => {
                             if signatures.contains_key(&msg) {
-                                verify_individual_sig(&thread_messages[msg], sig, thread_pks[&id])
-                                    .unwrap();
+                                pks.insert(i, PublicKey(pk));
+                                verify_individual_sig(&thread_messages[msg], sig, pks[&i]).unwrap();
                                 let group = signatures.get_mut(&msg).unwrap();
                                 group.insert(i, sig);
                                 if group.len() >= n as usize {
+                                    let t = std::time::Instant::now();
+                                    let lambda: Vec<Scalar> = {
+                                        let v = vec![Scalar::one().neg(), Scalar::one()];
+                                        (0..n)
+                                            .map(|_| *v.choose(&mut rand::thread_rng()).unwrap())
+                                            .collect()
+                                    };
+
+                                    let whole_pk = PublicKey(
+                                        pks.iter()
+                                            .zip(lambda.iter())
+                                            .map(|((_, v), lambda)| v.0 * lambda)
+                                            .sum(),
+                                    );
+
                                     let group_sig = signatures[&msg]
                                         .iter()
-                                        .zip(lam.iter())
+                                        .zip(lambda.iter())
                                         .map(|((_, v), lambda)| v * lambda)
                                         .sum();
+
                                     verify_combined_sig(&thread_messages[msg], group_sig, whole_pk)
                                         .unwrap();
+
+                                    combine_time += t.elapsed().as_secs_f64();
                                     signatures.remove(&msg);
                                 }
                             }
@@ -175,6 +184,16 @@ async fn run_single_node_threshold_signature(
                         _ => (),
                     }
                 }
+                let filename = format!("results/prf_signatures_aggregator_{}", n);
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .create(true)
+                    .open(filename)
+                    .unwrap();
+                file.write_all(format!("{:?}\n", combine_time / thread_messages.len() as f64).as_bytes())
+                    .unwrap();
+
                 thread_signal.send(0).unwrap();
             });
             idx += range_size;
@@ -189,18 +208,17 @@ async fn run_single_node_threshold_signature(
                 _ = interval.tick() => {
                     if signal.try_recv().is_ok() {
                         signals += 1;
-                        continue;
                     }
                 }
                 msg = node.recv.next() => {
                     let (id, share) = msg.unwrap();
-                    let (msg, share): (usize, Vec<u8>) = bincode::deserialize(&share).unwrap();
+                    let (msg, share, pk): (usize, Vec<u8>, Vec<u8>) = bincode::deserialize(&share).unwrap();
 
                     let mut idx = 0;
                     for i in 0..NUM_THREADS {
                         if msg < idx + range_size {
                             threads[i as usize]
-                                .send((id, msg - (i as usize * range_size), share))
+                                .send((id, msg - (i as usize * range_size), share, pk))
                                 .map_err(|_| ())
                                 .unwrap();
                             break;
@@ -214,36 +232,94 @@ async fn run_single_node_threshold_signature(
         let total_time = time.elapsed();
         std::thread::sleep(std::time::Duration::from_secs(1));
         node.shutdown();
-        println!("total_time: {:?}", total_time.as_secs_f64());
-
-        let filename = format!("results/univariate_threshold_signatures_{}_{}", n, t);
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .append(true)
-            .create(true)
-            .open(filename)
-            .unwrap();
-        file.write_all(format!("{:?}\n", total_time.as_secs_f64()).as_bytes())
-            .unwrap();
+        println!("Finished!");
     } else {
         let ids = vec![Id::Univariate(n as usize)];
 
-        let (sk, pk) = prf_keygen();
-
         let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
 
-        node.broadcast(&pk.0.to_affine().to_uncompressed().to_vec(), ids.clone())
-            .await;
+        let range_size = messages.len() / NUM_THREADS as usize;
+        let mut idx = 0;
+        let (ts, signal) = std::sync::mpsc::sync_channel(NUM_THREADS * 100 as usize);
+        let (tx, rx) = std::sync::mpsc::sync_channel(NUM_THREADS * 100 as usize);
 
-        node.recv.next().await.unwrap();
+        for i in 0..NUM_THREADS {
+            let thread_messages = if i == NUM_THREADS - 1 {
+                messages[idx..].to_vec()
+            } else {
+                messages[idx..idx + range_size].to_vec()
+            };
 
-        for (i, msg) in messages.iter().enumerate() {
-            let my_sig = sign_message(msg, &sk);
-            let to_send = (i, &my_sig.to_affine().to_uncompressed().to_vec());
+            let inputs = if i == NUM_THREADS - 1 {
+                client_input[idx..].to_vec()
+            } else {
+                client_input[idx..idx + range_size].to_vec()
+            };
 
-            node.broadcast(&bincode::serialize(&to_send).unwrap(), ids.clone())
-                .await;
+            let thread_signal = ts.clone();
+            let thread_tx = tx.clone();
+
+            let thread_id = i;
+
+            threadpool.execute(move || {
+
+                let mut prf_time = 0f64;
+                let mut sign_time = 0f64;
+
+                for (i, x) in inputs.iter().enumerate() {
+                    let t = std::time::Instant::now();
+                    let (sk, pk) = prf_keygen(x.to_string());
+                    prf_time += t.elapsed().as_secs_f64();
+
+                    let pk = pk.0.to_affine().to_uncompressed().to_vec();
+
+                    let t = std::time::Instant::now();
+                    let my_sig = sign_message(&thread_messages[i], &sk);
+                    sign_time += t.elapsed().as_secs_f64();
+
+                    let to_send = (
+                        thread_id * range_size + i,
+                        my_sig.to_affine().to_uncompressed().to_vec(),
+                        pk,
+                    );
+
+                    thread_tx
+                        .send(bincode::serialize(&to_send).unwrap())
+                        .unwrap();
+                }
+                thread_signal.send(0).unwrap();
+
+                let filename = format!("results/prf_signatures_{}_{}", n, thread_id);
+                let mut file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .append(true)
+                    .create(true)
+                    .open(filename)
+                    .unwrap();
+                file.write_all(format!("{:?},{:?}\n", prf_time / inputs.len() as f64, sign_time / inputs.len() as f64).as_bytes())
+                    .unwrap();
+            });
+
+            idx += range_size;
         }
+
+        let mut signals = 0;
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(10));
+        let time = std::time::Instant::now();
+
+        while signals < NUM_THREADS {
+            tokio::select! {
+                _ = interval.tick() => {
+                    while let Ok(msg) = rx.try_recv() {
+                        node.broadcast(&msg, ids.clone()).await;
+                    }
+                    if signal.try_recv().is_ok() {
+                        signals += 1;
+                    }
+                }
+            }
+        }
+
         std::thread::sleep(std::time::Duration::from_secs(1));
         node.shutdown();
     }
@@ -306,7 +382,7 @@ async fn run_single_node(my_id: usize, n: u32, t: usize, addresses: BTreeMap<Id,
     println!("Node {} finished", my_id);
 }
 
-pub fn prf_keygen() -> (Scalar, PublicKey) {
+pub fn prf_keygen(x: String) -> (Scalar, PublicKey) {
     use bigdecimal::{num_bigint::ToBigInt, BigDecimal};
     use bls12_381::Scalar;
     use openssl::{
@@ -316,7 +392,6 @@ pub fn prf_keygen() -> (Scalar, PublicKey) {
         sha::Sha512,
     };
 
-    let x = "colton".to_string();
     let u = 8192;
     let secp256 = EcGroup::from_curve_name(Nid::SECP256K1).unwrap();
     let secp571 = EcGroup::from_curve_name(Nid::SECT571K1).unwrap();
@@ -384,7 +459,4 @@ pub fn prf_keygen() -> (Scalar, PublicKey) {
     let pk = pk * sk;
 
     (sk, PublicKey(pk))
-    // let msg: [u8; 32] = [0; 32];
-    // let my_sig = sign_message(&msg, &sk);
-    // verify_individual_sig(&msg, my_sig, PublicKey(pk)).unwrap();
 }
