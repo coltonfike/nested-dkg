@@ -6,6 +6,6 @@ for i in [10, 20, 30, 40, 50]:
         arr = np.loadtxt(f, delimiter=',')
     avg = np.mean(arr, axis=0)
     np.insert(avg, 0, i)
-    with open('results/prf_signatures_aggregator' + str(i), 'a') as f:
+    with open('prf_signatures_aggregator_' + str(i), 'a') as f:
         writer = csv.writer(f)
         writer.writerow(avg)
