@@ -29,6 +29,8 @@ pub struct UnivariateDKGArgs {
     pub num_nodes: usize,
     #[clap(short = 't')]
     pub threshold: usize,
+    #[clap(short = 'a')]
+    pub aws: bool,
 }
 
 #[derive(Args, Clone, Copy, Debug, Eq, PartialEq)]
@@ -47,6 +49,8 @@ pub struct BivariateDKGArgs {
     pub threshold_t: usize,
     #[clap(short = 'p')]
     pub threshold_t_prime: usize,
+    #[clap(short = 'a')]
+    pub aws: bool,
 }
 
 #[derive(Args, Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +65,8 @@ pub struct UnivariateNiDKGArgs {
     pub threshold: usize,
     #[clap(short = 'l')]
     pub is_dealer: bool,
+    #[clap(short = 'a')]
+    pub aws: bool,
 }
 
 #[derive(Args, Clone, Copy, Debug, Eq, PartialEq)]
@@ -113,6 +119,8 @@ pub struct BivariateThresholdSignatureArgs {
     pub threshold_t: usize,
     #[clap(short = 'p')]
     pub threshold_t_prime: usize,
+    #[clap(short = 'a')]
+    pub aws: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]

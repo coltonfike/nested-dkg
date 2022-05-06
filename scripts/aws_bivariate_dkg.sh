@@ -8,6 +8,6 @@ for ((i=0; i<$N; i++))
 do
     for ((j=0; j<$M; j++))
     do
-        ./target/release/main bivariate-dkg -i "$i" -j "$j" -n "$N" -m "$M" -t "$T" -p "$P" &
+        ./target/release/main bivariate-dkg -i "$i" -j "$j" -n "$N" -m "$M" -t "$T" -p "$P" -a &
     done
 done

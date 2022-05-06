@@ -1,4 +1,8 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fs::File,
+    io::{BufRead, BufReader, Write},
+};
 
 use crate::dkg::{combine_dealings, combine_signatures, generate_shares};
 
@@ -25,23 +29,40 @@ pub fn write_dealing_to_file(nodes: (u32, u32), threshold: (usize, usize)) {
     .unwrap();
 }
 
-pub async fn run_local_threshold_signature(
+pub async fn run_threshold_signature(
     my_id: (usize, usize),
     nodes: (u32, u32),
     threshold: (usize, usize),
+    aws: bool,
 ) {
-    let mut addresses = BTreeMap::new();
-    let mut port = 30000;
+    let addresses = {
+        let mut addresses = BTreeMap::new();
+        if aws {
+            let mut reader = BufReader::new(File::open("addresses").unwrap());
 
-    for i in 0..nodes.0 {
-        for j in 0..nodes.1 {
-            addresses.insert(
-                Id::Bivariate(i as usize, j as usize),
-                format!("127.0.0.1:{}", port),
-            );
-            port += 1;
+            for i in 0..nodes.0 {
+                for j in 0..nodes.1 {
+                    let mut addr = String::new();
+                    reader.read_line(&mut addr).unwrap();
+                    addr.pop();
+                    addresses.insert(Id::Bivariate(i as usize, j as usize), addr);
+                }
+            }
+        } else {
+            let mut port = 30000;
+
+            for i in 0..nodes.0 {
+                for j in 0..nodes.1 {
+                    addresses.insert(
+                        Id::Bivariate(i as usize, j as usize),
+                        format!("127.0.0.1:{}", port),
+                    );
+                    port += 1;
+                }
+            }
         }
-    }
+        addresses
+    };
 
     run_single_node_threshold_signature(my_id, nodes, threshold, addresses).await;
 }
@@ -86,7 +107,7 @@ pub async fn run_single_node_threshold_signature(
         &std::fs::read("bivariate_shares").expect("unable to read share file"),
     )
     .expect("unable to deserialize file");
-    let dealing = Dealing::deserialize(dealing.0, dealing.1, nodes.0 as usize, threshold.1);
+    let dealing = Dealing::deserialize(dealing.0, dealing.1, nodes.1 as usize, threshold.1);
 
     let pk = dealing
         .0
@@ -145,7 +166,7 @@ pub async fn run_single_node_threshold_signature(
 
     let mut rng = rand::thread_rng();
     let to: Vec<Id> = ids
-        .choose_multiple(&mut rng, nodes.0 as usize - 1)
+        .choose_multiple(&mut rng, nodes.1 as usize - 1)
         .map(|e| *e)
         .collect();
 
@@ -189,19 +210,40 @@ pub async fn run_single_node_threshold_signature(
     println!("total_time: {:?}", total_time);
 }
 
-pub async fn run_local_dkg(my_id: (usize, usize), nodes: (u32, u32), threshold: (usize, usize)) {
-    let mut addresses = BTreeMap::new();
-    let mut port = 30000;
+pub async fn run_dkg(
+    my_id: (usize, usize),
+    nodes: (u32, u32),
+    threshold: (usize, usize),
+    aws: bool,
+) {
+    let addresses = {
+        let mut addresses = BTreeMap::new();
+        if aws {
+            let mut reader = BufReader::new(File::open("addresses").unwrap());
 
-    for i in 0..nodes.0 {
-        for j in 0..nodes.1 {
-            addresses.insert(
-                Id::Bivariate(i as usize, j as usize),
-                format!("127.0.0.1:{}", port),
-            );
-            port += 1;
+            for i in 0..nodes.0 {
+                for j in 0..nodes.1 {
+                    let mut addr = String::new();
+                    reader.read_line(&mut addr).unwrap();
+                    addr.pop();
+                    addresses.insert(Id::Bivariate(i as usize, j as usize), addr);
+                }
+            }
+        } else {
+            let mut port = 30000;
+
+            for i in 0..nodes.0 {
+                for j in 0..nodes.1 {
+                    addresses.insert(
+                        Id::Bivariate(i as usize, j as usize),
+                        format!("127.0.0.1:{}", port),
+                    );
+                    port += 1;
+                }
+            }
         }
-    }
+        addresses
+    };
 
     run_single_node_dkg(my_id, nodes, threshold, addresses).await;
 }
@@ -259,12 +301,11 @@ async fn run_single_node_dkg(
                 dealings.push(Dealing::deserialize(
                     serialized_coefficients,
                     serialized_shares,
-                    11,
-                    5,
+                    nodes.1 as usize,
+                    threshold.1,
                 ));
             }
         }
-        println!("Time taken to deserialize: {:?}", t.elapsed());
     }
 
     let (coefficients, sk) = combine_dealings(my_id, &dealings);
@@ -272,4 +313,5 @@ async fn run_single_node_dkg(
 
     std::thread::sleep(std::time::Duration::from_secs(1));
     node.shutdown();
+    println!("done!");
 }

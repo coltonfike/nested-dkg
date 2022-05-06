@@ -17,8 +17,11 @@ use ic_types::{
 };
 use networking::Node;
 use rand::Rng;
-use std::collections::BTreeMap;
-use std::time::Instant;
+use std::{
+    collections::BTreeMap,
+    io::{BufRead, BufReader},
+};
+use std::{fs::File, time::Instant};
 use tokio_stream::StreamExt;
 use types::Id;
 
@@ -36,14 +39,23 @@ pub fn generate_keypairs(n: usize) {
     std::fs::write("keypairs", bincode::serialize(&keypairs).unwrap()).unwrap();
 }
 
-pub async fn run_local_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool) {
-    let mut addresses = BTreeMap::new();
-    let mut port = 30000;
-
-    for i in 0..n + d {
-        addresses.insert(Id::Univariate(i as usize), format!("127.0.0.1:{}", port));
-        port += 1;
-    }
+pub async fn run_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool, aws: bool) {
+    let addresses = {
+        let mut addresses = BTreeMap::new();
+        if aws {
+            let reader = BufReader::new(File::open("addresses").unwrap());
+            for (i, line) in reader.lines().enumerate() {
+                addresses.insert(Id::Univariate(i), line.unwrap());
+            }
+        } else {
+            let mut port = 30000;
+            for i in 0..n + d {
+                addresses.insert(Id::Univariate(i as usize), format!("127.0.0.1:{}", port));
+                port += 1;
+            }
+        }
+        addresses
+    };
 
     let keypairs: Vec<FsEncryptionKeySetWithPop> =
         bincode::deserialize(&std::fs::read("keypairs").expect("unable to read keypairs"))

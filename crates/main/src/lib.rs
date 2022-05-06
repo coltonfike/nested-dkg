@@ -8,25 +8,33 @@ use types::{
 use univariate_dkg as univariate;
 
 pub async fn univariate_dkg(args: UnivariateDKGArgs) {
-    univariate::api::run_local_dkg(args.node_index, args.num_nodes as u32, args.threshold).await;
+    univariate::api::run_dkg(
+        args.node_index,
+        args.num_nodes as u32,
+        args.threshold,
+        args.aws,
+    )
+    .await;
 }
 
 pub async fn bivariate_dkg(args: BivariateDKGArgs) {
-    bivariate::api::run_local_dkg(
+    bivariate::api::run_dkg(
         (args.node_index_i, args.node_index_j),
         (args.num_nodes_n as u32, args.num_nodes_m as u32),
         (args.threshold_t, args.threshold_t_prime),
+        args.aws,
     )
     .await;
 }
 
 pub async fn univariate_nidkg(args: UnivariateNiDKGArgs) {
-    nidkg::run_local_dkg(
+    nidkg::run_dkg(
         args.node_index,
         args.num_nodes,
         args.num_dealers,
         args.threshold,
         args.is_dealer,
+        args.aws,
     )
     .await;
 }
@@ -40,28 +48,21 @@ pub fn generate_keypairs(args: NiDKGKeyPairsArgs) {
 }
 
 pub async fn univariate_threshold_signature(args: UnivariateThresholdSignatureArgs) {
-    if !args.aws {
-        univariate::api::run_local_threshold_signature(
-            args.node_index,
-            args.num_nodes_n as u32,
-            args.threshold,
-        )
-        .await;
-    } else {
-        univariate::api::run_aws_threshold_signature(
-            args.node_index,
-            args.num_nodes_n as u32,
-            args.threshold,
-        )
-        .await;
-    }
+    univariate::api::run_threshold_signature(
+        args.node_index,
+        args.num_nodes_n as u32,
+        args.threshold,
+        args.aws,
+    )
+    .await;
 }
 
 pub async fn bivariate_threshold_signature(args: BivariateThresholdSignatureArgs) {
-    bivariate::api::run_local_threshold_signature(
+    bivariate::api::run_threshold_signature(
         (args.node_index_i, args.node_index_j),
         (args.num_nodes_n as u32, args.num_nodes_m as u32),
         (args.threshold_t, args.threshold_t_prime),
+        args.aws,
     )
     .await;
 }

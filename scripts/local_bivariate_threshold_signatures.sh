@@ -8,6 +8,6 @@ for ((i=0; i<$N; i++))
 do
     for ((j=0; j<$M; j++))
     do
-        ./target/debug/main bivariate-threshold-signature -i "$i" -j "$j" -n "$N" -m "$M" -t "$T" -p "$P" &
+        ./target/release/main bivariate-threshold-signature -i "$i" -j "$j" -n "$N" -m "$M" -t "$T" -p "$P" &
     done
 done

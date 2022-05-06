@@ -19,6 +19,7 @@ use types::{
     Id,
 };
 
+// Generates shares and writes them to a file. Useful for tests that assume shares already exist
 pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     let dealing = generate_shares(nodes, threshold);
 
@@ -29,27 +30,29 @@ pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     .unwrap();
 }
 
-pub async fn run_local_threshold_signature(my_id: usize, n: u32, t: usize) {
-    let mut addresses = BTreeMap::new();
-    let mut port = 30000;
-
-    for i in 0..n {
-        addresses.insert(Id::Univariate(i as usize), format!("127.0.0.1:{}", port));
-        port += 1;
-    }
+// Runs a local test on threshold signatures
+pub async fn run_threshold_signature(my_id: usize, n: u32, t: usize, aws: bool) {
+    let addresses = {
+        let mut addresses = BTreeMap::new();
+        if aws {
+            let reader = BufReader::new(File::open("addresses").unwrap());
+            for (i, line) in reader.lines().enumerate() {
+                addresses.insert(Id::Univariate(i), line.unwrap());
+            }
+        } else {
+            let mut port = 30000;
+            for i in 0..n {
+                addresses.insert(Id::Univariate(i as usize), format!("127.0.0.1:{}", port));
+                port += 1;
+            }
+        }
+        addresses
+    };
 
     run_single_node_threshold_signature(my_id, n, t, addresses).await;
 }
 
-pub async fn run_aws_threshold_signature(my_id: usize, n: u32, t: usize) {
-    let mut addresses = BTreeMap::new();
-    let reader = BufReader::new(File::open("addresses").unwrap());
-    for (i, line) in reader.lines().enumerate() {
-        addresses.insert(Id::Univariate(i), line.unwrap());
-    }
-    run_single_node_threshold_signature(my_id, n, t, addresses).await;
-}
-
+// runs a node for a threshold signature
 async fn run_single_node_threshold_signature(
     my_id: usize,
     n: u32,
@@ -123,22 +126,34 @@ async fn run_single_node_threshold_signature(
         .create(true)
         .open(filename)
         .unwrap();
+
     file.write_all(format!("{:?}\n", total_time).as_bytes())
         .unwrap();
 }
 
-pub async fn run_local_dkg(my_id: usize, n: u32, t: usize) {
-    let mut addresses = BTreeMap::new();
-    let mut port = 30000;
-
-    for i in 0..n {
-        addresses.insert(Id::Univariate(i as usize), format!("127.0.0.1:{}", port));
-        port += 1;
-    }
+// runs a local dkg test
+pub async fn run_dkg(my_id: usize, n: u32, t: usize, aws: bool) {
+    let addresses = {
+        let mut addresses = BTreeMap::new();
+        if aws {
+            let reader = BufReader::new(File::open("addresses").unwrap());
+            for (i, line) in reader.lines().enumerate() {
+                addresses.insert(Id::Univariate(i), line.unwrap());
+            }
+        } else {
+            let mut port = 30000;
+            for i in 0..n {
+                addresses.insert(Id::Univariate(i as usize), format!("127.0.0.1:{}", port));
+                port += 1;
+            }
+        }
+        addresses
+    };
 
     run_single_node(my_id, n, t, addresses).await;
 }
 
+// runs a single node in a dkg
 async fn run_single_node(my_id: usize, n: u32, t: usize, addresses: BTreeMap<Id, String>) {
     let ids = addresses
         .iter()
