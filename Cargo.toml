@@ -5,13 +5,40 @@ members = [
     "crates/univariate-dkg",
     "crates/bivariate-dkg",
     "crates/types",
-    "crates/nidkg"
+    "crates/nidkg",
+    "crates/dfinity/bls12_381",
+    "crates/dfinity/fs_ni_dkg",
 ]
 
+exclude = ["universal_canister/impl"]
+
 [profile.release]
-opt-level = 3
+# Add debug information to the release build (does NOT reduce the level of optimization!)
+# Makes flamegraphs more readable.
+# https://doc.rust-lang.org/cargo/reference/manifest.html#the-profile-sections
+debug = true
+
+[profile.release-stripped]
+inherits = "release"
 lto = "thin"
-incremental = true
+debug = false
+
+[profile.release-lto]
+inherits = "release"
+# Enable "thin" LTO to reduce both the compilation time and the binary size.
+# See: https://doc.rust-lang.org/cargo/reference/profiles.html#lto
+lto = "thin"
+
+[profile.canister-release]
+inherits = "release"
+debug = false
+lto = true
+opt-level = 'z'
 
 [profile.dev.package.miracl_core_bls12381]
+# Optimise the miracl_core_bls12381 cryptographic library, or else NiDKG tests take 4 hours.
 opt-level = 3
+
+[patch.crates-io]
+# TODO (CRP-1204): Remove this once tokio-rustls has been updated.
+webpki = { git = "https://github.com/dfinity-lab/webpki", branch = "v0.21.4-v3-no-extensions" }
