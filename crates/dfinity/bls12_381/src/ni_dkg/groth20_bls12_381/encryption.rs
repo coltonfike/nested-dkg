@@ -15,7 +15,7 @@ use conversions::{
     public_coefficients_to_miracl, public_key_from_miracl, secret_key_from_miracl,
     sharing_proof_from_miracl, sharing_proof_into_miracl, Tau,
 };
-use ic_crypto_internal_bls12381_serde_miracl::miracl_g1_from_bytes;
+use ic_crypto_internal_bls12381_serde_miracl::{miracl_g1_from_bytes, G1Bytes};
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381::{
     FsEncryptionCiphertext, FsEncryptionPlaintext, FsEncryptionPublicKey, NodeIndex,
 };
@@ -28,12 +28,15 @@ use ic_types::crypto::error::InvalidArgumentError;
 use ic_types::crypto::AlgorithmId;
 use ic_types::{NumberOfNodes, Randomness};
 use lazy_static::lazy_static;
+use miracl_core::bls12381::big::BIG;
+use miracl_core::bls12381::ecp::ECP;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
 pub(crate) mod conversions;
 
 mod crypto {
+    pub use ic_crypto_internal_fs_ni_dkg::el_gamal;
     pub use ic_crypto_internal_fs_ni_dkg::encryption_key_pop::EncryptionKeyPop;
     pub use ic_crypto_internal_fs_ni_dkg::forward_secure::{
         dec_chunks, enc_chunks, epoch_from_tau_vec, kgen, mk_sys_params,
@@ -86,6 +89,18 @@ pub fn create_forward_secure_key_pair(
         pop,
         secret_key,
     }
+}
+
+pub fn create_forward_secure_key_pair_el_gamal(
+    seed: Randomness,
+    associated_data: &[u8],
+) -> (FsEncryptionPublicKey, BIG) {
+    use crypto::el_gamal::kgen;
+    let mut rng = crypto::RAND_ChaCha20::new(seed.get());
+    let (lib_public_key_with_pop, secret_key) = kgen(associated_data, &mut rng);
+    let (public_key, pop) = public_key_from_miracl(&lib_public_key_with_pop);
+    // let secret_key = secret_key_from_miracl(&lib_secret_key);
+    (public_key, secret_key)
 }
 
 /// Updates the provided key.
@@ -233,6 +248,77 @@ pub fn encrypt_and_prove(
     ))
 }
 
+/// Encrypts several messages to several recipients
+///
+/// # Errors
+/// This should never return an error if the protocol is followed.  Every error
+/// should be prevented by the caller validating the arguments beforehand.
+///
+/// # Panics
+/// * If the `enc_chunks` function fails. Though, this truly should never happen
+///   (cf. CRP-815).
+pub fn encrypt_and_prove_el_gamal(
+    seed: Randomness,
+    key_message_pairs: &[(FsEncryptionPublicKey, FsEncryptionPlaintext)],
+) -> Result<Vec<(G1Bytes, Vec<G1Bytes>)>, EncryptAndZKProveError> {
+    let public_keys: Result<Vec<miracl::ECP>, EncryptAndZKProveError> = key_message_pairs
+        .as_ref()
+        .iter()
+        .zip(0..)
+        .map(|((public_key, _plaintext), receiver_index)| {
+            miracl_g1_from_bytes(public_key.as_bytes()).map_err(|_| {
+                EncryptAndZKProveError::MalformedFsPublicKeyError {
+                    receiver_index,
+                    error: MalformedPublicKeyError {
+                        algorithm: AlgorithmId::NiDkg_Groth20_Bls12_381,
+                        key_bytes: Some(public_key.as_bytes().to_vec()),
+                        internal_error: "Could not parse public key.".to_string(),
+                    },
+                }
+            })
+        })
+        .collect();
+    let public_keys = public_keys?;
+
+    let plaintext_chunks: Vec<_> = key_message_pairs
+        .as_ref()
+        .iter()
+        .map(|(_public_key, plaintext)| plaintext_from_bytes(&plaintext.chunks))
+        .collect();
+
+    // The API takes a vector of pointers so we need to keep the values but generate
+    // another vector with the values.
+    let public_key_pointers: Vec<&miracl::ECP> = public_keys.iter().collect();
+
+    let mut rng = crypto::RAND_ChaCha20::new(seed.get());
+    use crypto::el_gamal::enc_chunks;
+    let ciphertext = enc_chunks(&plaintext_chunks, public_key_pointers, &mut rng);
+
+    // let chunking_proof = prove_chunking(
+    //     &public_keys,
+    //     &ciphertext,
+    //     &plaintext_chunks,
+    //     &toxic_waste,
+    //     &mut rng,
+    // );
+    // let miracl_public_coefficients = public_coefficients_to_miracl(public_coefficients)
+    //     .map_err(|_| EncryptAndZKProveError::MalformedPublicCoefficients)?;
+    // let sharing_proof = prove_sharing(
+    //     &public_keys,
+    //     &miracl_public_coefficients,
+    //     &ciphertext,
+    //     &plaintext_chunks,
+    //     &toxic_waste,
+    //     &mut rng,
+    // );
+
+    Ok(
+        ciphertext,
+        // chunking_proof_from_miracl(&chunking_proof),
+        // sharing_proof_from_miracl(&sharing_proof),
+    )
+}
+
 /// Decrypts a single message
 ///
 /// # Returns
@@ -273,6 +359,28 @@ pub fn decrypt(
     decrypt_maybe
         .map(|decrypt| plaintext_to_bytes(&decrypt))
         .map_err(|_| DecryptError::InvalidChunk)
+}
+
+pub fn decrypt_el_gamal(
+    ciphertext: &(G1Bytes, Vec<G1Bytes>),
+    secret_key: &BIG,
+    node_index: NodeIndex,
+) -> FsEncryptionPlaintext {
+    // let index = usize::try_from(node_index).map_err(|_| {
+    //     DecryptError::SizeError(SizeError {
+    //         message: format!("Node index is too large for this machine: {}", node_index),
+    //     })
+    // })?;
+    // if index >= ciphertext.1.len() {
+    //     return Err(DecryptError::InvalidReceiverIndex {
+    //         num_receivers: NumberOfNodes::from(ciphertext.1.len() as NodeIndex),
+    //         node_index,
+    //     });
+    // }
+    use crypto::el_gamal::dec_chunks;
+    let decrypt_maybe = dec_chunks(secret_key, node_index as usize, ciphertext);
+
+    plaintext_to_bytes(&decrypt_maybe)
 }
 
 /// Zero knowledge proof of correct chunking

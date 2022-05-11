@@ -15,8 +15,8 @@ use rand_core::SeedableRng;
 use std::collections::btree_map::BTreeMap;
 use std::convert::TryFrom;
 
-#[cfg(test)]
-pub mod tests;
+// #[cfg(test)]
+// pub mod tests;
 
 /// Checks whether my share is correct in all dealings and responds with any
 /// complaints.

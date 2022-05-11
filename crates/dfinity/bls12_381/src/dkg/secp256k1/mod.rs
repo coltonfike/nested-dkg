@@ -20,5 +20,5 @@ pub use ephemeral_key::{create_ephemeral, verify_ephemeral};
 pub use response::{create_response, verify_response};
 pub use transcript::{compute_private_key, create_resharing_transcript, create_transcript};
 
-#[cfg(test)]
-pub mod test_fixtures;
+// #[cfg(test)]
+// pub mod test_fixtures;

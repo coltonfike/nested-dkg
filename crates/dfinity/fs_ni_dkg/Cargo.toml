@@ -13,6 +13,7 @@ ic-crypto-internal-bls12381-common ={ git="https://github.com/dfinity/ic.git" }
 ic-crypto-internal-bls12381-serde-miracl = { git="https://github.com/dfinity/ic.git" }
 ic-crypto-internal-types = { git="https://github.com/dfinity/ic.git" }
 ic-crypto-sha = { git="https://github.com/dfinity/ic.git" }
+ic-types = { git = "https://github.com/dfinity/ic.git" }
 
 [dev-dependencies]
 proptest = "0.9.4"

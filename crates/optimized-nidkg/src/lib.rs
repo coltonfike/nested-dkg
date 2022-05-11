@@ -1,8 +1,14 @@
-use ic_crypto_internal_threshold_sig_bls12381::ni_dkg::groth20_bls12_381::{
-    compute_threshold_signing_key, create_dealing, create_forward_secure_key_pair,
-    create_transcript, trusted_secret_key_into_miracl,
-    types::{FsEncryptionKeySetWithPop, FsEncryptionSecretKey},
-    verify_dealing,
+use ic_crypto_internal_bls12381_serde_miracl::G1Bytes;
+use ic_crypto_internal_threshold_sig_bls12381::{
+    api::{individual_public_key, sign_message, verify_individual_signature},
+    ni_dkg::groth20_bls12_381::{
+        compute_threshold_signing_key, compute_threshold_signing_key_el_gamal,
+        create_dealing_el_gamal, create_forward_secure_key_pair_el_gamal, create_transcript,
+        create_transcript_el_gamal, trusted_secret_key_into_miracl,
+        types::{FsEncryptionKeySetWithPop, FsEncryptionSecretKey},
+        verify_dealing,
+    },
+    types::public_coefficients::conversions::InternalPublicCoefficients,
 };
 use ic_crypto_internal_types::{
     encrypt::forward_secure::groth20_bls12_381::FsEncryptionPublicKey,
@@ -11,10 +17,14 @@ use ic_crypto_internal_types::{
         Epoch,
     },
 };
+use ic_crypto_internal_types::{
+    sign::threshold_sig::public_coefficients::bls12_381::PublicCoefficientsBytes, NodeIndex,
+};
 use ic_types::{
     crypto::threshold_sig::ni_dkg::{NiDkgId, NiDkgTag, NiDkgTargetId, NiDkgTargetSubnet},
     Height, NumberOfNodes, PrincipalId, Randomness, SubnetId,
 };
+use miracl_core::bls12381::big::BIG;
 use networking::Node;
 use rand::Rng;
 use std::{
@@ -30,10 +40,11 @@ pub fn generate_keypairs(n: usize) {
 
     let mut keypairs = Vec::new();
     for i in 0..n {
-        keypairs.push(create_forward_secure_key_pair(
+        let (pk, sk) = create_forward_secure_key_pair_el_gamal(
             Randomness::from(rand::thread_rng().gen::<[u8; 32]>()),
             KEY_GEN_ASSOCIATED_DATA,
-        ));
+        );
+        keypairs.push((pk, sk.tostring()));
     }
 
     std::fs::write("keypairs", bincode::serialize(&keypairs).unwrap()).unwrap();
@@ -57,13 +68,13 @@ pub async fn run_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool
         addresses
     };
 
-    let keypairs: Vec<FsEncryptionKeySetWithPop> =
+    let keypairs: Vec<(FsEncryptionPublicKey, String)> =
         bincode::deserialize(&std::fs::read("keypairs").expect("unable to read keypairs"))
             .expect("unable to deserialize file");
 
     let mut receiver_keys = BTreeMap::new();
     for (i, keypair) in keypairs.iter().enumerate() {
-        receiver_keys.insert(i as u32, keypair.public_key);
+        receiver_keys.insert(i as u32, keypair.0);
     }
 
     if is_dealer {
@@ -75,7 +86,7 @@ pub async fn run_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool
             n,
             d,
             t,
-            keypairs[my_id].secret_key.clone(),
+            BIG::fromstring(keypairs[my_id].1.clone()),
             addresses,
         )
         .await;
@@ -136,7 +147,7 @@ async fn run_single_dealer(
 
     let mut node = Node::new(addresses, Id::Univariate(my_id + n)).await;
 
-    let dealing = create_dealing(
+    let dealing = create_dealing_el_gamal(
         keygen_seed,
         encryption_seed,
         threshold,
@@ -162,16 +173,17 @@ async fn run_single_dealer(
         match id {
             Id::Univariate(id) => {
                 if !dealings.contains_key(&((id - n) as u32)) {
-                    let dealing: Dealing = bincode::deserialize(&msg).unwrap();
-                    verify_dealing(
-                        nidkg_id,
-                        (id - n) as u32,
-                        threshold,
-                        epoch,
-                        &receiver_keys,
-                        &dealing,
-                    )
-                    .unwrap();
+                    let dealing: (PublicCoefficientsBytes, Vec<(G1Bytes, Vec<G1Bytes>)>) =
+                        bincode::deserialize(&msg).unwrap();
+                    // verify_dealing(
+                    //     nidkg_id,
+                    //     (id - n) as u32,
+                    //     threshold,
+                    //     epoch,
+                    //     &receiver_keys,
+                    //     &dealing,
+                    // )
+                    // .unwrap();
                     dealings.insert((id - n) as u32, dealing);
                 }
             }
@@ -179,7 +191,8 @@ async fn run_single_dealer(
         }
     }
 
-    let transcript = create_transcript(threshold, NumberOfNodes::new(n as u32), &dealings).unwrap();
+    let transcript =
+        create_transcript_el_gamal(threshold, NumberOfNodes::new(n as u32), &dealings).unwrap();
 
     node.broadcast(bincode::serialize(&transcript).unwrap().as_slice(), ids)
         .await;
@@ -193,23 +206,31 @@ async fn run_single_node(
     n: usize,
     d: usize,
     t: usize,
-    sk: FsEncryptionSecretKey,
+    sk: BIG,
     addresses: BTreeMap<Id, String>,
 ) {
     let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
     println!("waiting for transcript");
     let (_, msg) = node.recv.next().await.expect("failed to read message");
     println!("got transcript");
-    let transcript: Transcript = bincode::deserialize(&msg).unwrap();
+    let transcript: (
+        PublicCoefficientsBytes,
+        BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>,
+    ) = bincode::deserialize(&msg).unwrap();
 
-    let signing_key = compute_threshold_signing_key(
-        &transcript,
-        my_id as u32,
-        &trusted_secret_key_into_miracl(&sk),
-        Epoch::from(1),
+    let signing_key =
+        compute_threshold_signing_key_el_gamal(transcript.1, my_id as u32, &sk).unwrap();
+    println!("got my signing key");
+
+    let msg: [u8; 32] = [0; 32];
+    let my_sig = sign_message(&msg, &signing_key).unwrap();
+    verify_individual_signature(
+        &msg,
+        my_sig,
+        individual_public_key(&transcript.0, my_id as u32).unwrap(),
     )
     .unwrap();
-    println!("got my signing key");
+    println!("Signed message");
 
     std::thread::sleep(std::time::Duration::from_secs(20));
     node.shutdown();

@@ -860,6 +860,7 @@ pub fn enc_chunks(
         })
         .collect();
 
+    // CHANGED!!
     let extended_tau = extend_tau(&cc, &rr, &ss, tau, associated_data);
     let id = ftau(&extended_tau, sys).expect("extended_tau not the correct size");
     let mut zz = Vec::new();
@@ -868,6 +869,8 @@ pub fn enc_chunks(
         tmp.add(&g2mul(&sys.h, &s[j]));
         zz.push(tmp);
     }
+    // END CHANGED!!
+
     Some((Crsz { cc, rr, ss, zz }, ToxicWaste { spec_r, s }))
 }
 
@@ -1013,6 +1016,8 @@ pub fn dec_chunks(
     // zipWith4 f cj rr ss zz where
     //   f c spec_r s z =
     //     ate(g2, c) * ate(bneg, spec_r) * ate(z, dk_a) * ate(eneg, s)
+
+    //? This is where M = e(g1, g2)^m is calculated
     let powers: Vec<_> = cj
         .iter()
         .zip(crsz.rr.iter().zip(crsz.ss.iter().zip(crsz.zz.iter())))

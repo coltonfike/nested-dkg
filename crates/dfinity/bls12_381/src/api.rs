@@ -55,8 +55,8 @@ use std::convert::{TryFrom, TryInto};
 
 pub mod dkg_errors;
 pub mod ni_dkg_errors;
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 pub mod threshold_sign_error;
 
 /// Generates keys for threshold signatories.

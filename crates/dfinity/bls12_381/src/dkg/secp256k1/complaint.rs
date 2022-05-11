@@ -22,8 +22,8 @@ use ic_types::{crypto::AlgorithmId, IDkgId, NodeIndex, Randomness};
 use rand::{CryptoRng, Rng};
 use std::convert::{TryFrom, TryInto};
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 const DOMAIN_POK_COMPLAINT: &str = "pok dkg complaint";
 

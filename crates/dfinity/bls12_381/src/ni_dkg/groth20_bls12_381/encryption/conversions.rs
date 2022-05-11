@@ -189,11 +189,13 @@ pub fn ciphertext_from_miracl(ciphertext: &crypto::Crsz) -> FsEncryptionCipherte
         rand_s
     };
     let rand_z = {
+        // CHANGED!
         assert_eq!(
             ciphertext.zz.len(),
             NUM_CHUNKS,
             "Incorrect number of chunks from Miracl-library formatted forward secure Ciphertext"
         );
+        // END CHANGED!
         let mut rand_z = [G2Bytes([0u8; G2Bytes::SIZE]); NUM_CHUNKS];
         for (dst, src) in rand_z[..].iter_mut().zip(&ciphertext.zz) {
             *dst = miracl_g2_to_bytes(src);
@@ -231,10 +233,13 @@ pub fn ciphertext_into_miracl(
         .iter()
         .map(|g1_bytes| miracl_g1_from_bytes(&g1_bytes.0).or(Err("Malformed rand_s")))
         .collect::<Result<Vec<_>, _>>()?;
+    // CHANGED!
+    let zz: Vec<ECP2> = Vec::new();
     let zz: Vec<ECP2> = ciphertext.rand_z[..]
         .iter()
         .map(|g2_bytes| miracl_g2_from_bytes(&g2_bytes.0).or(Err("Malformed rand_z")))
         .collect::<Result<Vec<_>, _>>()?;
+    // END CHANGED!
     let cc: Vec<Vec<ECP>> = ciphertext
         .ciphertext_chunks
         .iter()

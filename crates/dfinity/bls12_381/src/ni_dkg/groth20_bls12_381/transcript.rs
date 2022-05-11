@@ -4,14 +4,16 @@ use super::dealing::{
     verify_all_shares_are_present_and_well_formatted, verify_public_coefficients_match_threshold,
     verify_threshold,
 };
-use super::encryption::decrypt;
+use super::encryption::{decrypt, decrypt_el_gamal};
 use crate::api::ni_dkg_errors;
 use crate::crypto::x_for_index;
 use crate::types as threshold_types;
 use ic_crypto_internal_bls12381_common::fr_from_bytes;
+use ic_crypto_internal_bls12381_serde_miracl::G1Bytes;
 use ic_crypto_internal_fs_ni_dkg::forward_secure::SecretKey as ForwardSecureSecretKey;
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381 as g20;
 use ic_types::{NodeIndex, NumberOfNodes};
+use miracl_core::bls12381::big::BIG;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 use std::ops::{AddAssign, MulAssign};
@@ -57,6 +59,30 @@ pub fn create_transcript(
         .map(|(index, dealing)| (*index, dealing))
         .collect();
     compute_transcript(threshold, number_of_receivers, &csp_dealings)
+}
+
+pub fn create_transcript_el_gamal(
+    threshold: NumberOfNodes,
+    number_of_receivers: NumberOfNodes,
+    csp_dealings: &BTreeMap<NodeIndex, (PublicCoefficientsBytes, Vec<(G1Bytes, Vec<G1Bytes>)>)>,
+) -> Result<
+    (
+        PublicCoefficientsBytes,
+        BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>,
+    ),
+    CspDkgCreateTranscriptError,
+> {
+    let min_num_dealings = usize::try_from(threshold.get()).map_err(|_| {
+        CspDkgCreateTranscriptError::SizeError(SizeError {
+            message: format!("Threshold is too large for this machine: {}", threshold),
+        })
+    })?;
+    let csp_dealings = csp_dealings
+        .iter()
+        .take(min_num_dealings)
+        .map(|(index, dealing)| (*index, dealing))
+        .collect();
+    compute_transcript_el_gamal(threshold, number_of_receivers, &csp_dealings)
 }
 
 /// Creates an NiDKG transcript with the same public key as an existing
@@ -215,6 +241,91 @@ fn compute_transcript(
     })
 }
 
+fn compute_transcript_el_gamal(
+    threshold: NumberOfNodes,
+    number_of_receivers: NumberOfNodes,
+    csp_dealings: &BTreeMap<NodeIndex, &(PublicCoefficientsBytes, Vec<(G1Bytes, Vec<G1Bytes>)>)>,
+) -> Result<
+    (
+        PublicCoefficientsBytes,
+        BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>,
+    ),
+    CspDkgCreateTranscriptError,
+> {
+    // Extract and verify the data we need from the arguments
+    verify_threshold(threshold, number_of_receivers)
+        .map_err(CspDkgCreateTranscriptError::InvalidThresholdError)?;
+
+    let receiver_data: Result<BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>, _> = csp_dealings
+        .iter()
+        .map(|(dealer_index, dealing)| {
+            // verify_all_shares_are_present_and_well_formatted(dealing, number_of_receivers)
+            //     .map_err(|error| CspDkgCreateTranscriptError::InvalidDealingError {
+            //         dealer_index: *dealer_index,
+            //         error,
+            //     })?;
+            // verify_public_coefficients_match_threshold(dealing, threshold).map_err(|error| {
+            //     CspDkgCreateTranscriptError::InvalidDealingError {
+            //         dealer_index: *dealer_index,
+            //         error,
+            //     }
+            // })?;
+            Ok((*dealer_index, dealing.1.clone()))
+        })
+        .collect();
+    let receiver_data = receiver_data?;
+
+    let individual_public_coefficients: Result<
+        BTreeMap<NodeIndex, threshold_types::PublicCoefficients>,
+        _,
+    > = csp_dealings
+        .iter()
+        .map(|(dealer_index, dealing)| {
+            // Type conversion from crypto internal type.
+            // The dealings have already been verified,
+            // so we can trust the serialized coefficients.
+            threshold_types::PublicCoefficients::from_trusted_bytes(&dealing.0)
+                .map(|public_coefficients| (*dealer_index, public_coefficients))
+                .map_err(|crypto_error| {
+                    let error = InvalidArgumentError {
+                        message: format!("Invalid dealing: {:?}", crypto_error),
+                    };
+                    CspDkgCreateTranscriptError::InvalidDealingError {
+                        dealer_index: *dealer_index,
+                        error,
+                    }
+                })
+        })
+        .collect();
+    let individual_public_coefficients = individual_public_coefficients?;
+
+    // Combine the dealings
+    let public_coefficients: g20::PublicCoefficientsBytes = {
+        let lagrange_coefficients = {
+            let reshare_x: Vec<threshold_types::SecretKey> =
+                csp_dealings.keys().copied().map(x_for_index).collect();
+
+            threshold_types::PublicCoefficients::lagrange_coefficients_at_zero(&reshare_x)
+                .expect("Cannot fail because all x are distinct.")
+        };
+
+        let mut combined_public_coefficients = threshold_types::PublicCoefficients::zero();
+
+        for ((_dealer_index, individual), factor) in individual_public_coefficients
+            .into_iter()
+            .zip(lagrange_coefficients)
+        {
+            // Aggregate the public coefficients:
+            combined_public_coefficients += individual * factor;
+        }
+
+        // This type conversion is needed because of the internal/CSP type duplication.
+        g20::PublicCoefficientsBytes::from(&combined_public_coefficients)
+    };
+
+    Ok((public_coefficients, receiver_data))
+}
+
 /// Computes a participant's threshold signing key from the DKG transcript.
 ///
 /// # Arguments
@@ -275,6 +386,69 @@ pub fn compute_threshold_signing_key(
                     let message = format!(
                         "Dealing #{}: has invalid share for receiver #{}.",
                         dealer_index, receiver_index
+                    );
+                    let error = InvalidArgumentError { message };
+                    return Err(
+                        ni_dkg_errors::CspDkgLoadPrivateKeyError::InvalidTranscriptError(error),
+                    );
+                };
+
+                let secret_key = secret_key.expect("Unwrap of None");
+                Ok((*dealer_index, secret_key))
+            })
+            .collect();
+    let shares_from_each_dealer = shares_from_each_dealer?;
+
+    // Interpolate
+    let combined_shares = {
+        let lagrange_coefficients = {
+            let reshare_x: Vec<threshold_types::SecretKey> = shares_from_each_dealer
+                .keys()
+                .copied()
+                .map(x_for_index)
+                .collect();
+
+            threshold_types::PublicCoefficients::lagrange_coefficients_at_zero(&reshare_x)
+                .expect("Cannot fail because all x are distinct.")
+        };
+
+        let mut combined_shares = threshold_types::SecretKey::zero();
+
+        for ((_dealer_index, mut share), factor) in shares_from_each_dealer
+            .into_iter()
+            .zip(lagrange_coefficients)
+        {
+            // Aggregate the shares:
+            share.mul_assign(&factor);
+            combined_shares.add_assign(&share);
+        }
+        threshold_types::SecretKeyBytes::from(combined_shares)
+    };
+    Ok(combined_shares)
+}
+
+pub fn compute_threshold_signing_key_el_gamal(
+    transcript: BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>,
+    receiver_index: NodeIndex,
+    fs_secret_key: &BIG,
+) -> Result<threshold_types::SecretKeyBytes, ni_dkg_errors::CspDkgLoadPrivateKeyError> {
+    // Get my shares
+    let shares_from_each_dealer: Result<BTreeMap<NodeIndex, threshold_types::SecretKey>, _> =
+        transcript
+            .iter()
+            .map(|(dealer_index, encrypted_shares)| {
+                let fs_plaintext = decrypt_el_gamal(
+                    &encrypted_shares[receiver_index as usize],
+                    fs_secret_key,
+                    receiver_index,
+                );
+                let secret_key = FrBytes::from(&fs_plaintext);
+                let secret_key = fr_from_bytes(&secret_key.0);
+
+                if secret_key.is_err() {
+                    let message = format!(
+                        "Dealing #: has invalid share for receiver #{}.",
+                        receiver_index
                     );
                     let error = InvalidArgumentError { message };
                     return Err(

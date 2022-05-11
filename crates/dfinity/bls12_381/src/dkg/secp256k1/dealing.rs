@@ -27,10 +27,10 @@ use ic_types::{
 };
 use std::convert::{TryFrom, TryInto};
 
-#[cfg(test)]
-mod test_resharing;
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod test_resharing;
+// #[cfg(test)]
+// mod tests;
 
 /// Creates a new dealing: Generates threshold keys, encrypts each secret key.
 ///
@@ -199,7 +199,7 @@ pub fn create_resharing_dealing(
 /// # Errors
 /// * The public keys must be well formed, otherwise this MUST return an error.
 /// # Returns
-/// The encrypted threshold secret keys of eligible receivers.  
+/// The encrypted threshold secret keys of eligible receivers.
 /// Each encrypted secret key can be decrypted by the corresponding receiver.
 fn create_receiver_data(
     dkg_id: IDkgId,

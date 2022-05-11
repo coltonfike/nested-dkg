@@ -12,8 +12,8 @@ use ic_types::{crypto::AlgorithmId, IDkgId, Randomness};
 use rand::{CryptoRng, Rng};
 use std::convert::TryInto;
 
-#[cfg(test)]
-pub mod tests;
+// #[cfg(test)]
+// pub mod tests;
 
 const DOMAIN_POP_EPHEMERAL: &str = "pop ephemeral key";
 const DOMAIN_POP_EPHEMERAL_NON_REWIND: &str = "pop ephemeral key non-rewind";

@@ -11,6 +11,8 @@ networking = { path = "../networking" }
 ic-crypto-internal-threshold-sig-bls12381 = { path = "../dfinity/bls12_381" }
 ic-crypto-internal-types = { git="https://github.com/dfinity/ic.git" }
 ic-types = { git = "https://github.com/dfinity/ic.git" }
+miracl_core = { version = "4.1.0", package = "miracl_core_bls12381" }
+ic-crypto-internal-bls12381-serde-miracl = { git="https://github.com/dfinity/ic.git" }
 rand = "0.7.3"
 rand_chacha = "0.2.2"
 rand_core = "0.5.1"

@@ -28,15 +28,27 @@ pub async fn bivariate_dkg(args: BivariateDKGArgs) {
 }
 
 pub async fn univariate_nidkg(args: UnivariateNiDKGArgs) {
-    nidkg::run_dkg(
-        args.node_index,
-        args.num_nodes,
-        args.num_dealers,
-        args.threshold,
-        args.is_dealer,
-        args.aws,
-    )
-    .await;
+    if args.optimized {
+        optimized_nidkg::run_dkg(
+            args.node_index,
+            args.num_nodes,
+            args.num_dealers,
+            args.threshold,
+            args.is_dealer,
+            args.aws,
+        )
+        .await;
+    } else {
+        nidkg::run_dkg(
+            args.node_index,
+            args.num_nodes,
+            args.num_dealers,
+            args.threshold,
+            args.is_dealer,
+            args.aws,
+        )
+        .await;
+    }
 }
 
 pub fn bivariate_nidkg(args: BivariateNiDKGArgs) {
@@ -44,7 +56,11 @@ pub fn bivariate_nidkg(args: BivariateNiDKGArgs) {
 }
 
 pub fn generate_keypairs(args: NiDKGKeyPairsArgs) {
-    nidkg::generate_keypairs(args.num_nodes);
+    if args.optimized {
+        optimized_nidkg::generate_keypairs(args.num_nodes);
+    } else {
+        nidkg::generate_keypairs(args.num_nodes);
+    }
 }
 
 pub async fn univariate_threshold_signature(args: UnivariateThresholdSignatureArgs) {

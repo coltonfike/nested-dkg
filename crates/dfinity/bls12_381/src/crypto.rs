@@ -30,8 +30,8 @@ pub fn hash_message_to_g1(msg: &[u8]) -> G1Projective {
     hash_to_g1(&DOMAIN_HASH_MSG_TO_G1_BLS12381_SIG[..], msg)
 }
 
-#[cfg(test)]
-pub mod tests;
+// #[cfg(test)]
+// pub mod tests;
 
 /// Computes the public equivalent of a secret key.
 pub fn public_key_from_secret_key(secret_key: &SecretKey) -> PublicKey {

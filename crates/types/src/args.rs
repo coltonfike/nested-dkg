@@ -67,6 +67,8 @@ pub struct UnivariateNiDKGArgs {
     pub is_dealer: bool,
     #[clap(short = 'a')]
     pub aws: bool,
+    #[clap(short = 'o')]
+    pub optimized: bool,
 }
 
 #[derive(Args, Clone, Copy, Debug, Eq, PartialEq)]
@@ -91,6 +93,8 @@ pub struct BivariateNiDKGArgs {
 pub struct NiDKGKeyPairsArgs {
     #[clap(short = 'n')]
     pub num_nodes: usize,
+    #[clap(short = 'o')]
+    pub optimized: bool,
 }
 
 #[derive(Args, Clone, Debug, Eq, PartialEq)]

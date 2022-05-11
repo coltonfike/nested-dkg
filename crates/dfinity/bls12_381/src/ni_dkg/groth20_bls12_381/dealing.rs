@@ -1,7 +1,7 @@
 //! Dealing phase of Groth20-BLS12-381 non-interactive distributed key
 //! generation.
 
-use super::encryption::{encrypt_and_prove, verify_zk_proofs};
+use super::encryption::{encrypt_and_prove, encrypt_and_prove_el_gamal, verify_zk_proofs};
 use crate::api::ni_dkg_errors::{
     dealing::InvalidDealingError, CspDkgCreateReshareDealingError, CspDkgVerifyDealingError,
     InvalidArgumentError, MalformedSecretKeyError, MisnumberedReceiverError, SizeError,
@@ -12,9 +12,10 @@ use crate::{
     crypto::{keygen, keygen_with_secret},
 };
 use ic_crypto_internal_bls12381_common::fr_to_bytes;
-use ic_crypto_internal_bls12381_serde_miracl::FrBytes;
+use ic_crypto_internal_bls12381_serde_miracl::{FrBytes, G1Bytes};
 use ic_types::crypto::threshold_sig::ni_dkg::NiDkgId;
 use ic_types::{NodeIndex, NumberOfNodes, Randomness};
+use miracl_core::bls12381::ecp::ECP;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
@@ -87,7 +88,6 @@ pub fn create_dealing(
             for index in receiver_keys.keys() {
                 selected[*index as usize] = true;
             }
-            println!("Selected size: {}\n Selected: {:?}", selected.len(), selected);
             selected
         };
         if let Some(resharing_secret) = resharing_secret {
@@ -150,106 +150,62 @@ pub fn create_dealing(
     Ok(dealing)
 }
 
-/// Creates a new dealing, i.e. generates threshold keys.
-///
-/// # Arguments
-/// * `keygen_seed` - randomness used to seed the PRNG for generating the
-///   keys/shares. It must be treated as a secret.
-/// * `encryption_seed` - randomness used to seed the PRNG for encrypting the
-///   shares and proving their correctness. It must be treated as a secret.
-/// * `threshold` - the minimum number of individual signatures that can be
-///   combined into a valid threshold signature.
-/// * `receiver_keys` - forward-secure encryption public keys of the receivers.
-/// * `epoch` - forward-secure epoch under which the shares are encrypted.
-/// * `dealer_index` - index of the dealer.
-/// * `resharing_secret` - existing secret key if resharing, or `None` if not.
-///
-/// # Errors
-/// * `CspDkgCreateReshareDealingError::SizeError` if the length of
-///   `receiver_keys` isn't supported.
-/// * `CspDkgCreateReshareDealingError::InvalidThresholdError` if the threshold
-///   is either zero or greater than the number of receivers.
-/// * `CspDkgCreateReshareDealingError::MalformedReshareSecretKeyError` if
-///   `resharing_key` is malformed.
-/// * `CspDkgCreateReshareDealingError::InvalidThresholdError` if key generation
-///   fails.
-/// * `CspDkgCreateDealingError::MalformedFsPublicKeyError` if one of the
-///   `receiver_keys` is malformed.
-/// * `CspDkgCreateReshareDealingError::MisnumberedReceiverError` if the
-///   receiver indices are not `0..num_receivers-1 inclusive`.
-///
-/// # Panics:
-/// * If key generation produces key shares with non-contiguous indices.
-/// * If key generation produces key shares that don't match the given
-///   `receiver_keys`.
-/// * If the key generation produces public coefficients that are malformed.
-
-// TODO: Make this more efficient!
-pub fn create_bivariate_dealing(
+pub fn create_dealing_el_gamal(
     keygen_seed: Randomness,
     encryption_seed: Randomness,
-    threshold: (NumberOfNodes, NumberOfNodes),
+    threshold: NumberOfNodes,
     receiver_keys: &BTreeMap<NodeIndex, FsEncryptionPublicKey>,
     epoch: Epoch,
     dealer_index: NodeIndex,
-    node_dimensions: (usize, usize),
-    // resharing_secret: Option<ThresholdSecretKeyBytes>,
-) -> Result<Dealing, CspDkgCreateReshareDealingError> {
+    resharing_secret: Option<ThresholdSecretKeyBytes>,
+) -> Result<(PublicCoefficientsBytes, Vec<(G1Bytes, Vec<G1Bytes>)>), CspDkgCreateReshareDealingError>
+{
     // Check parameters
     {
         let number_of_receivers = number_of_receivers(receiver_keys)
             .map_err(CspDkgCreateReshareDealingError::SizeError)?;
-        verify_threshold(threshold.0, number_of_receivers)
+        verify_threshold(threshold, number_of_receivers)
             .map_err(CspDkgCreateReshareDealingError::InvalidThresholdError)?;
         verify_receiver_indices(receiver_keys, number_of_receivers)?;
     }
 
     let (public_coefficients, threshold_secret_key_shares) = {
-        let selected_nodes: Vec<Vec<bool>> = {
-            // let max_node_index = receiver_keys.keys().max();
-            // let mut selected =
-            //     vec![false; max_node_index.map(|index| *index as usize + 1).unwrap_or(0)];
-            // for index in receiver_keys.keys() {
-            //     selected[*index as usize] = true;
-            // }
-            let mut selected = vec![vec![false; node_dimensions.1]; node_dimensions.0];
-            for i in 0..node_dimensions.0 {
-                for j in 0..node_dimensions.1 {
-                    selected[i][j] = true;
-                }
+        let selected_nodes: Vec<bool> = {
+            let max_node_index = receiver_keys.keys().max();
+            let mut selected =
+                vec![false; max_node_index.map(|index| *index as usize + 1).unwrap_or(0)];
+            for index in receiver_keys.keys() {
+                selected[*index as usize] = true;
             }
-            println!("Selected size: {}\n Selected: {:?}", selected.len() * selected[0].len(), selected);
             selected
         };
-        // if let Some(resharing_secret) = resharing_secret {
-        //     let resharing_secret: ThresholdSecretKey =
-        //         ThresholdSecretKey::try_from(&resharing_secret).map_err(|_| {
-        //             CspDkgCreateReshareDealingError::MalformedReshareSecretKeyError(
-        //                 MalformedSecretKeyError {
-        //                     algorithm: ALGORITHM_ID,
-        //                     internal_error: "Malformed reshared secret key".to_string(),
-        //                 },
-        //             )
-        //         })?;
+        if let Some(resharing_secret) = resharing_secret {
+            let resharing_secret: ThresholdSecretKey =
+                ThresholdSecretKey::try_from(&resharing_secret).map_err(|_| {
+                    CspDkgCreateReshareDealingError::MalformedReshareSecretKeyError(
+                        MalformedSecretKeyError {
+                            algorithm: ALGORITHM_ID,
+                            internal_error: "Malformed reshared secret key".to_string(),
+                        },
+                    )
+                })?;
 
-        //     keygen_with_secret(
-        //         keygen_seed,
-        //         threshold,
-        //         &selected_nodes[..],
-        //         &resharing_secret,
-        //     )
-        //     .map_err(CspDkgCreateReshareDealingError::InvalidThresholdError)
-        // } else {
-        bivariate_keygen(keygen_seed, threshold, &selected_nodes)
+            keygen_with_secret(
+                keygen_seed,
+                threshold,
+                &selected_nodes[..],
+                &resharing_secret,
+            )
             .map_err(CspDkgCreateReshareDealingError::InvalidThresholdError)
-        // }
+        } else {
+            keygen(keygen_seed, threshold, &selected_nodes[..])
+                .map_err(CspDkgCreateReshareDealingError::InvalidThresholdError)
+        }
     }?;
 
-    println!("Public Coefficients: {}", public_coefficients.coefficients.len());
-    println!("Secret keys: {}", threshold_secret_key_shares.len());
     let public_coefficients = PublicCoefficientsBytes::from(&public_coefficients); // Internal to CSP type conversion
 
-    let (ciphertexts, zk_proof_decryptability, zk_proof_correct_sharing) = {
+    let ciphertexts = {
         let key_message_pairs: Vec<(FsEncryptionPublicKey, FsEncryptionPlaintext)> = (0..)
             .zip(&threshold_secret_key_shares)
             .map(|(index, share)| {
@@ -265,21 +221,10 @@ pub fn create_bivariate_dealing(
                 )
             })
             .collect();
-        encrypt_and_prove(
-            encryption_seed,
-            &key_message_pairs,
-            epoch,
-            &public_coefficients,
-            &dealer_index.to_be_bytes(),
-        )
+        encrypt_and_prove_el_gamal(encryption_seed, &key_message_pairs)
     }?;
 
-    let dealing = Dealing {
-        public_coefficients,
-        ciphertexts,
-        zk_proof_decryptability,
-        zk_proof_correct_sharing,
-    };
+    let dealing = (public_coefficients, ciphertexts);
     Ok(dealing)
 }
 

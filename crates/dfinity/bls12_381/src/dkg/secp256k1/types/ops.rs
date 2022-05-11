@@ -3,8 +3,8 @@ use libsecp256k1::curve::Scalar;
 use libsecp256k1::ECMULT_CONTEXT;
 use std::ops::{Add, AddAssign, Mul, MulAssign, Neg};
 
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod tests;
 
 /// Public * Secret
 ///

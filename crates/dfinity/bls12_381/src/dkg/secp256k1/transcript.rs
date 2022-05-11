@@ -26,10 +26,10 @@ use std::convert::TryFrom;
 use std::iter::Sum;
 use std::ops::{AddAssign, MulAssign, SubAssign};
 
-#[cfg(test)]
-mod test_resharing;
-#[cfg(test)]
-mod tests;
+// #[cfg(test)]
+// mod test_resharing;
+// #[cfg(test)]
+// mod tests;
 
 /// Combines all valid dealings into a short transcript.
 ///
