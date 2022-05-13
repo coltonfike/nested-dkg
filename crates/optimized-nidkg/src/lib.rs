@@ -6,14 +6,14 @@ use ic_crypto_internal_threshold_sig_bls12381::{
         create_dealing_el_gamal, create_forward_secure_key_pair_el_gamal, create_transcript,
         create_transcript_el_gamal, trusted_secret_key_into_miracl,
         types::{FsEncryptionKeySetWithPop, FsEncryptionSecretKey},
-        verify_dealing,
+        verify_dealing, verify_dealing_el_gamal,
     },
     types::public_coefficients::conversions::InternalPublicCoefficients,
 };
 use ic_crypto_internal_types::{
     encrypt::forward_secure::groth20_bls12_381::FsEncryptionPublicKey,
     sign::threshold_sig::ni_dkg::{
-        ni_dkg_groth20_bls12_381::{Dealing, Transcript},
+        ni_dkg_groth20_bls12_381::{Dealing, Transcript, ZKProofDec},
         Epoch,
     },
 };
@@ -158,10 +158,10 @@ async fn run_single_dealer(
     )
     .unwrap();
 
-    dealings.insert(my_id as u32, dealing);
+    dealings.insert(my_id as u32, (dealing.0.clone(), dealing.1.clone()));
 
     node.broadcast(
-        bincode::serialize(dealings.get(&(my_id as u32)).unwrap())
+        bincode::serialize(&(dealing.0, dealing.1, dealing.2))
             .unwrap()
             .as_slice(),
         dealers,
@@ -173,18 +173,20 @@ async fn run_single_dealer(
         match id {
             Id::Univariate(id) => {
                 if !dealings.contains_key(&((id - n) as u32)) {
-                    let dealing: (PublicCoefficientsBytes, Vec<(G1Bytes, Vec<G1Bytes>)>) =
-                        bincode::deserialize(&msg).unwrap();
-                    // verify_dealing(
-                    //     nidkg_id,
-                    //     (id - n) as u32,
-                    //     threshold,
-                    //     epoch,
-                    //     &receiver_keys,
-                    //     &dealing,
-                    // )
-                    // .unwrap();
-                    dealings.insert((id - n) as u32, dealing);
+                    let dealing: (
+                        PublicCoefficientsBytes,
+                        Vec<(G1Bytes, Vec<G1Bytes>)>,
+                        ZKProofDec,
+                    ) = bincode::deserialize(&msg).unwrap();
+                    verify_dealing_el_gamal(
+                        (id - n) as u32,
+                        threshold,
+                        epoch,
+                        &receiver_keys,
+                        &dealing,
+                    )
+                    .unwrap();
+                    dealings.insert((id - n) as u32, (dealing.0, dealing.1));
                 }
             }
             _ => (),

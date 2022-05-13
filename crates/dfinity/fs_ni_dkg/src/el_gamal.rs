@@ -88,11 +88,13 @@ pub fn enc_chunks(
     sij: &[Vec<isize>],
     pks: Vec<&ECP>,
     rng: &mut impl RAND,
-) -> Vec<(G1Bytes, Vec<G1Bytes>)> {
+) -> (Vec<(G1Bytes, Vec<G1Bytes>)>, Vec<BIG>) {
     let spec_p = BIG::new_ints(&rom::CURVE_ORDER);
     let g1 = ECP::generator();
+    let mut ys = Vec::new();
 
-    sij.iter()
+    let ciphertext = sij
+        .iter()
         .zip(pks.iter())
         .map(|(si, pk)| {
             let y = BIG::randomnum(&spec_p, rng);
@@ -106,9 +108,11 @@ pub fn enc_chunks(
                     miracl_g1_to_bytes(&m)
                 })
                 .collect();
+            ys.push(y);
             (miracl_g1_to_bytes(&c1), c2)
         })
-        .collect()
+        .collect();
+    (ciphertext, ys)
 }
 
 pub fn dec_chunks(sk: &BIG, i: usize, ciphertext: &(G1Bytes, Vec<G1Bytes>)) -> Vec<isize> {

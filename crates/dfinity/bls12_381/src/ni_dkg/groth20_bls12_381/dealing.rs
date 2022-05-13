@@ -1,7 +1,9 @@
 //! Dealing phase of Groth20-BLS12-381 non-interactive distributed key
 //! generation.
 
-use super::encryption::{encrypt_and_prove, encrypt_and_prove_el_gamal, verify_zk_proofs};
+use super::encryption::{
+    encrypt_and_prove, encrypt_and_prove_el_gamal, verify_zk_proofs, verify_zk_proofs_el_gamal,
+};
 use crate::api::ni_dkg_errors::{
     dealing::InvalidDealingError, CspDkgCreateReshareDealingError, CspDkgVerifyDealingError,
     InvalidArgumentError, MalformedSecretKeyError, MisnumberedReceiverError, SizeError,
@@ -25,7 +27,7 @@ use crate::types::{SecretKey as ThresholdSecretKey, SecretKeyBytes as ThresholdS
 // "New style" internal types, used for the NiDKG:
 use super::ALGORITHM_ID;
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381::{
-    Dealing, FsEncryptionPlaintext, FsEncryptionPublicKey, PublicCoefficientsBytes,
+    Dealing, FsEncryptionPlaintext, FsEncryptionPublicKey, PublicCoefficientsBytes, ZKProofDec,
 };
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::Epoch;
 
@@ -158,8 +160,14 @@ pub fn create_dealing_el_gamal(
     epoch: Epoch,
     dealer_index: NodeIndex,
     resharing_secret: Option<ThresholdSecretKeyBytes>,
-) -> Result<(PublicCoefficientsBytes, Vec<(G1Bytes, Vec<G1Bytes>)>), CspDkgCreateReshareDealingError>
-{
+) -> Result<
+    (
+        PublicCoefficientsBytes,
+        Vec<(G1Bytes, Vec<G1Bytes>)>,
+        ZKProofDec,
+    ),
+    CspDkgCreateReshareDealingError,
+> {
     // Check parameters
     {
         let number_of_receivers = number_of_receivers(receiver_keys)
@@ -224,7 +232,7 @@ pub fn create_dealing_el_gamal(
         encrypt_and_prove_el_gamal(encryption_seed, &key_message_pairs)
     }?;
 
-    let dealing = (public_coefficients, ciphertexts);
+    let dealing = (public_coefficients, ciphertexts.0, ciphertexts.1);
     Ok(dealing)
 }
 
@@ -281,6 +289,38 @@ pub fn verify_dealing(
         &dealing.ciphertexts,
         &dealing.zk_proof_decryptability,
         &dealing.zk_proof_correct_sharing,
+        &dealer_index.to_be_bytes(),
+    )?;
+    Ok(())
+}
+
+pub fn verify_dealing_el_gamal(
+    dealer_index: NodeIndex,
+    threshold: NumberOfNodes,
+    epoch: Epoch,
+    receiver_keys: &BTreeMap<NodeIndex, FsEncryptionPublicKey>,
+    dealing: &(
+        PublicCoefficientsBytes,
+        Vec<(G1Bytes, Vec<G1Bytes>)>,
+        ZKProofDec,
+    ),
+) -> Result<(), CspDkgVerifyDealingError> {
+    let number_of_receivers =
+        number_of_receivers(receiver_keys).map_err(CspDkgVerifyDealingError::SizeError)?;
+    verify_threshold(threshold, number_of_receivers)
+        .map_err(CspDkgVerifyDealingError::InvalidThresholdError)?;
+    verify_receiver_indices(receiver_keys, number_of_receivers)?;
+    // verify_all_shares_are_present_and_well_formatted(dealing, number_of_receivers)
+    //     .map_err(CspDkgVerifyDealingError::InvalidDealingError)?;
+    // verify_public_coefficients_match_threshold(dealing, threshold)
+    //     .map_err(CspDkgVerifyDealingError::InvalidDealingError)?;
+    verify_zk_proofs_el_gamal(
+        epoch,
+        receiver_keys,
+        &dealing.0,
+        &dealing.1,
+        &dealing.2,
+        // &dealing.zk_proof_correct_sharing,
         &dealer_index.to_be_bytes(),
     )?;
     Ok(())

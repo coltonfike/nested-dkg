@@ -16,6 +16,7 @@ use conversions::{
     sharing_proof_from_miracl, sharing_proof_into_miracl, Tau,
 };
 use ic_crypto_internal_bls12381_serde_miracl::{miracl_g1_from_bytes, G1Bytes};
+use ic_crypto_internal_fs_ni_dkg::nizk_chunking::ProofChunking;
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381::{
     FsEncryptionCiphertext, FsEncryptionPlaintext, FsEncryptionPublicKey, NodeIndex,
 };
@@ -260,7 +261,7 @@ pub fn encrypt_and_prove(
 pub fn encrypt_and_prove_el_gamal(
     seed: Randomness,
     key_message_pairs: &[(FsEncryptionPublicKey, FsEncryptionPlaintext)],
-) -> Result<Vec<(G1Bytes, Vec<G1Bytes>)>, EncryptAndZKProveError> {
+) -> Result<(Vec<(G1Bytes, Vec<G1Bytes>)>, ZKProofDec), EncryptAndZKProveError> {
     let public_keys: Result<Vec<miracl::ECP>, EncryptAndZKProveError> = key_message_pairs
         .as_ref()
         .iter()
@@ -294,13 +295,13 @@ pub fn encrypt_and_prove_el_gamal(
     use crypto::el_gamal::enc_chunks;
     let ciphertext = enc_chunks(&plaintext_chunks, public_key_pointers, &mut rng);
 
-    // let chunking_proof = prove_chunking(
-    //     &public_keys,
-    //     &ciphertext,
-    //     &plaintext_chunks,
-    //     &toxic_waste,
-    //     &mut rng,
-    // );
+    let chunking_proof = prove_chunking_el_gamal(
+        &public_keys,
+        &ciphertext.0,
+        &plaintext_chunks,
+        &ciphertext.1,
+        &mut rng,
+    );
     // let miracl_public_coefficients = public_coefficients_to_miracl(public_coefficients)
     //     .map_err(|_| EncryptAndZKProveError::MalformedPublicCoefficients)?;
     // let sharing_proof = prove_sharing(
@@ -313,8 +314,7 @@ pub fn encrypt_and_prove_el_gamal(
     // );
 
     Ok(
-        ciphertext,
-        // chunking_proof_from_miracl(&chunking_proof),
+        (ciphertext.0, chunking_proof_from_miracl(&chunking_proof)),
         // sharing_proof_from_miracl(&sharing_proof),
     )
 }
@@ -387,6 +387,48 @@ pub fn decrypt_el_gamal(
 ///
 /// Note: The crypto::nizk API data types are inconsistent with those used in
 /// crypto::forward_secure so we need a thin wrapper to convert.
+fn prove_chunking_el_gamal(
+    receiver_fs_public_keys: &[miracl::ECP],
+    ciphertext: &Vec<(G1Bytes, Vec<G1Bytes>)>,
+    plaintext_chunks: &[Vec<isize>],
+    toxic_waste: &Vec<BIG>,
+    rng: &mut crypto::RAND_ChaCha20,
+) -> crypto::ProofChunking {
+    let big_plaintext_chunks: Vec<Vec<miracl::BIG>> = plaintext_chunks
+        .iter()
+        .map(|chunks| chunks.iter().copied().map(miracl::BIG::new_int).collect())
+        .collect();
+
+    let (ciphertext_chunks, randomizers_r) = {
+        let mut ciphertext_chunks = Vec::new();
+        let mut randomizers_r = Vec::new();
+        for (randomizer_r, ciphertext_chunk) in ciphertext {
+            ciphertext_chunks.push(
+                ciphertext_chunk
+                    .iter()
+                    .map(|chunk| miracl_g1_from_bytes(&chunk.0).unwrap())
+                    .collect(),
+            );
+            randomizers_r.push(miracl_g1_from_bytes(&randomizer_r.0).unwrap());
+        }
+        (ciphertext_chunks, randomizers_r)
+    };
+
+    let chunking_instance = crypto::ChunkingInstance {
+        g1_gen: miracl::ECP::generator(),
+        public_keys: receiver_fs_public_keys.to_vec(),
+        ciphertext_chunks,
+        randomizers_r,
+    };
+
+    let chunking_witness = crypto::ChunkingWitness {
+        scalars_r: toxic_waste.clone(),
+        scalars_s: big_plaintext_chunks,
+    };
+
+    crypto::prove_chunking(&chunking_instance, &chunking_witness, rng)
+}
+
 fn prove_chunking(
     receiver_fs_public_keys: &[miracl::ECP],
     ciphertext: &crypto::Crsz,
@@ -583,6 +625,119 @@ pub fn verify_zk_proofs(
         };
         CspDkgVerifyDealingError::InvalidDealingError(error)
     })
+}
+
+pub fn verify_zk_proofs_el_gamal(
+    epoch: Epoch,
+    receiver_fs_public_keys: &BTreeMap<NodeIndex, FsEncryptionPublicKey>,
+    public_coefficients: &PublicCoefficientsBytes,
+    ciphertexts: &Vec<(G1Bytes, Vec<G1Bytes>)>,
+    chunking_proof: &ZKProofDec,
+    // sharing_proof: &ZKProofShare,
+    associated_data: &[u8],
+) -> Result<(), CspDkgVerifyDealingError> {
+    // Conversions
+    let public_keys: Result<Vec<miracl::ECP>, CspDkgVerifyDealingError> = receiver_fs_public_keys
+        .values()
+        .zip(0..)
+        .map(|(public_key, receiver_index)| {
+            miracl_g1_from_bytes(public_key.as_bytes()).map_err(|parse_error| {
+                let error = MalformedPublicKeyError {
+                    algorithm: ALGORITHM_ID,
+                    key_bytes: Some(public_key.as_bytes()[..].to_vec()),
+                    internal_error: format!("{:?}", parse_error),
+                };
+                CspDkgVerifyDealingError::MalformedFsPublicKeyError {
+                    receiver_index,
+                    error,
+                }
+            })
+        })
+        .collect();
+    let public_keys = public_keys?;
+
+    // crypto::verify_ciphertext_integrity(&ciphertext, &tau.0[..], associated_data, &SYS_PARAMS)
+    //     .map_err(|_| {
+    //         CspDkgVerifyDealingError::InvalidDealingError(InvalidArgumentError {
+    //             message: "Ciphertext integrity check failed".to_string(),
+    //         })
+    //     })?;
+
+    let chunking_proof = chunking_proof_into_miracl(chunking_proof).map_err(|_| {
+        CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
+            message: "Could not parse proof of correct encryption".to_string(),
+        })
+    })?;
+
+    let (ciphertext_chunks, randomizers_r) = {
+        let mut ciphertext_chunks = Vec::new();
+        let mut randomizers_r = Vec::new();
+        for (randomizer_r, ciphertext_chunk) in ciphertexts {
+            ciphertext_chunks.push(
+                ciphertext_chunk
+                    .iter()
+                    .map(|chunk| miracl_g1_from_bytes(&chunk.0).unwrap())
+                    .collect(),
+            );
+            randomizers_r.push(miracl_g1_from_bytes(&randomizer_r.0).unwrap());
+        }
+        (ciphertext_chunks, randomizers_r)
+    };
+
+    // Verify proof
+    crypto::verify_chunking(
+        &crypto::ChunkingInstance {
+            g1_gen: miracl::ECP::generator(),
+            public_keys: public_keys.clone(),
+            ciphertext_chunks: ciphertext_chunks.clone(),
+            randomizers_r: randomizers_r.clone(),
+        },
+        &chunking_proof,
+    )
+    .map_err(|_| {
+        let error = InvalidArgumentError {
+            message: "Invalid chunking proof".to_string(),
+        };
+        CspDkgVerifyDealingError::InvalidDealingError(error)
+    })?;
+
+    // More conversions
+    let miracl_public_coefficients =
+        public_coefficients_to_miracl(public_coefficients).map_err(|_| {
+            CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
+                message: "Could not parse public coefficients".to_string(),
+            })
+        })?;
+    let combined_r = util::ecp_from_big_endian_chunks(&randomizers_r);
+    let combined_ciphertexts: Vec<miracl::ECP> = ciphertext_chunks
+        .iter()
+        .map(util::ecp_from_big_endian_chunks)
+        .collect();
+    Ok(())
+    // let sharing_proof = sharing_proof_into_miracl(sharing_proof).map_err(|_| {
+    //     CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
+    //         message: "Could not parse proof of correct sharing".to_string(),
+    //     })
+    // })?;
+
+    // crypto::verify_sharing(
+    //     &crypto::SharingInstance {
+    //         g1_gen: miracl::ECP::generator(),
+    //         g2_gen: miracl::ECP2::generator(),
+    //         public_keys,
+    //         public_coefficients: miracl_public_coefficients,
+    //         combined_randomizer: combined_r,
+    //         combined_ciphertexts,
+    //     },
+    //     &sharing_proof,
+    // )
+    // .map_err(|e| {
+    //     println!("Error was: {:?}", e);
+    //     let error = InvalidArgumentError {
+    //         message: "Invalid sharing proof".to_string(),
+    //     };
+    //     CspDkgVerifyDealingError::InvalidDealingError(error)
+    // })
 }
 
 mod util {

@@ -6,7 +6,8 @@ mod transcript;
 pub mod types;
 
 pub use dealing::{
-    create_dealing, create_dealing_el_gamal, verify_dealing, verify_resharing_dealing,
+    create_dealing, create_dealing_el_gamal, verify_dealing, verify_dealing_el_gamal,
+    verify_resharing_dealing,
 };
 pub use encryption::conversions::{
     public_key_into_miracl, secret_key_from_miracl, trusted_secret_key_into_miracl,

@@ -302,15 +302,22 @@ pub fn verify_chunking(
     instance: &ChunkingInstance,
     nizk: &ProofChunking,
 ) -> Result<(), ZkProofChunkingError> {
+    println!("running proof");
     instance.check_instance()?;
+    println!("Valid Instance");
 
     let g1 = instance.g1_gen.clone();
     let num_receivers = instance.public_keys.len();
     require_eq("bb", nizk.bb.len(), NUM_ZK_REPETITIONS)?;
+    println!("bb correct");
     require_eq("cc", nizk.cc.len(), NUM_ZK_REPETITIONS)?;
+    println!("cc correct");
     require_eq("dd", nizk.dd.len(), num_receivers + 1)?;
+    println!("dd correct");
     require_eq("z_r", nizk.z_r.len(), num_receivers)?;
+    println!("z_r correct");
     require_eq("z_s", nizk.z_s.len(), NUM_ZK_REPETITIONS)?;
+    println!("z_s correct");
 
     let spec_p = BIG::new_ints(&rom::CURVE_ORDER);
     let spec_m = instance.randomizers_r.len();
@@ -323,6 +330,7 @@ pub fn verify_chunking(
 
     for z_sk in nizk.z_s.iter() {
         if BIG::comp(z_sk, &zz_big) >= 0 {
+            println!("z_sk and zz_big not correct");
             return Err(ZkProofChunkingError::InvalidProof);
         }
     }
@@ -372,6 +380,7 @@ pub fn verify_chunking(
         verifies = verifies && lhs.equals(&rhs);
     });
     if !verifies {
+        println!("does not verify");
         return Err(ZkProofChunkingError::InvalidProof);
     }
 
@@ -381,6 +390,7 @@ pub fn verify_chunking(
 
     let rhs = g1.mul(&nizk.z_beta);
     if !lhs.equals(&rhs) {
+        println!("lhs != rhs");
         return Err(ZkProofChunkingError::InvalidProof);
     }
 
@@ -404,6 +414,11 @@ pub fn verify_chunking(
                 .map(|e_ij| BIG::new_int(e_ij[k] as isize))
                 .collect();
             if c_ij_s.len() != spec_m * spec_n || e_ijk_s.len() != spec_m * spec_n {
+                println!(
+                    "Spec_m and spec_n not correct! {} : {}",
+                    c_ij_s.len() != spec_m * spec_n,
+                    e_ijk_s.len() != spec_m * spec_n
+                );
                 return Err(ZkProofChunkingError::InvalidProof);
             }
             Ok(ECP::muln(spec_m * spec_n, &c_ij_s, &e_ijk_s))
@@ -422,8 +437,11 @@ pub fn verify_chunking(
     let mut rhs = ECP::muln(num_receivers, &instance.public_keys, &nizk.z_r);
     rhs.add(&nizk.y0.mul2(&nizk.z_beta, &g1, &acc));
     if !lhs.equals(&rhs) {
+        println!("lhs != rhs final");
         return Err(ZkProofChunkingError::InvalidProof);
     }
+
+    println!("VALID PROOF");
     Ok(())
 }
 
