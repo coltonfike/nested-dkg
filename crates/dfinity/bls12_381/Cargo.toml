@@ -28,6 +28,8 @@ serde_json = "1.0.40"
 simple_asn1 = "0.5.4"
 strum_macros = "0.23.0"
 zeroize = { version = "1.4.3", features = ["zeroize_derive"] }
+types = { path = "../../types" }
+bivariate-dkg = { path = "../../bivariate-dkg" }
 
 [dev-dependencies]
 hex = "0.4.2"

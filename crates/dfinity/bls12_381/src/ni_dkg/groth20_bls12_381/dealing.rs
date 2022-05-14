@@ -8,7 +8,7 @@ use crate::api::ni_dkg_errors::{
     dealing::InvalidDealingError, CspDkgCreateReshareDealingError, CspDkgVerifyDealingError,
     InvalidArgumentError, MalformedSecretKeyError, MisnumberedReceiverError, SizeError,
 };
-use crate::crypto::bivariate_keygen;
+use crate::crypto::{bivariate_keygen, x_for_index};
 use crate::{
     api::individual_public_key,
     crypto::{keygen, keygen_with_secret},
@@ -18,12 +18,15 @@ use ic_crypto_internal_bls12381_serde_miracl::{FrBytes, G1Bytes};
 use ic_types::crypto::threshold_sig::ni_dkg::NiDkgId;
 use ic_types::{NodeIndex, NumberOfNodes, Randomness};
 use miracl_core::bls12381::ecp::ECP;
+use rand::SeedableRng;
+use rand_chacha::ChaChaRng;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
 // "Old style" CSP types, used for the threshold keys:
 use crate::types::{SecretKey as ThresholdSecretKey, SecretKeyBytes as ThresholdSecretKeyBytes};
-
+use bivariate_dkg::dkg::generate_shares;
+use types::bivariate::{Polynomial, PublicCoefficients};
 // "New style" internal types, used for the NiDKG:
 use super::ALGORITHM_ID;
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381::{
@@ -153,86 +156,39 @@ pub fn create_dealing(
 }
 
 pub fn create_dealing_el_gamal(
-    keygen_seed: Randomness,
+    seed: Randomness,
     encryption_seed: Randomness,
-    threshold: NumberOfNodes,
-    receiver_keys: &BTreeMap<NodeIndex, FsEncryptionPublicKey>,
+    threshold: (NumberOfNodes, NumberOfNodes),
+    nodes: (usize, usize),
+    receiver_keys: &BTreeMap<(NodeIndex, NodeIndex), FsEncryptionPublicKey>,
     epoch: Epoch,
     dealer_index: NodeIndex,
     resharing_secret: Option<ThresholdSecretKeyBytes>,
 ) -> Result<
-    (
-        PublicCoefficientsBytes,
-        Vec<(G1Bytes, Vec<G1Bytes>)>,
-        ZKProofDec,
-    ),
+    (PublicCoefficients, Vec<(G1Bytes, Vec<G1Bytes>)>, ZKProofDec),
     CspDkgCreateReshareDealingError,
 > {
-    // Check parameters
-    {
-        let number_of_receivers = number_of_receivers(receiver_keys)
-            .map_err(CspDkgCreateReshareDealingError::SizeError)?;
-        verify_threshold(threshold, number_of_receivers)
-            .map_err(CspDkgCreateReshareDealingError::InvalidThresholdError)?;
-        verify_receiver_indices(receiver_keys, number_of_receivers)?;
-    }
-
-    let (public_coefficients, threshold_secret_key_shares) = {
-        let selected_nodes: Vec<bool> = {
-            let max_node_index = receiver_keys.keys().max();
-            let mut selected =
-                vec![false; max_node_index.map(|index| *index as usize + 1).unwrap_or(0)];
-            for index in receiver_keys.keys() {
-                selected[*index as usize] = true;
-            }
-            selected
-        };
-        if let Some(resharing_secret) = resharing_secret {
-            let resharing_secret: ThresholdSecretKey =
-                ThresholdSecretKey::try_from(&resharing_secret).map_err(|_| {
-                    CspDkgCreateReshareDealingError::MalformedReshareSecretKeyError(
-                        MalformedSecretKeyError {
-                            algorithm: ALGORITHM_ID,
-                            internal_error: "Malformed reshared secret key".to_string(),
-                        },
-                    )
-                })?;
-
-            keygen_with_secret(
-                keygen_seed,
-                threshold,
-                &selected_nodes[..],
-                &resharing_secret,
-            )
-            .map_err(CspDkgCreateReshareDealingError::InvalidThresholdError)
-        } else {
-            keygen(keygen_seed, threshold, &selected_nodes[..])
-                .map_err(CspDkgCreateReshareDealingError::InvalidThresholdError)
-        }
-    }?;
-
-    let public_coefficients = PublicCoefficientsBytes::from(&public_coefficients); // Internal to CSP type conversion
+    let dealing = generate_shares(
+        (nodes.0 as u32, nodes.1 as u32),
+        (threshold.0.get() as usize, threshold.1.get() as usize),
+    );
 
     let ciphertexts = {
-        let key_message_pairs: Vec<(FsEncryptionPublicKey, FsEncryptionPlaintext)> = (0..)
-            .zip(&threshold_secret_key_shares)
-            .map(|(index, share)| {
-                let share =
-                    (*share).expect("The keys should be contiguous but we have a missing entry.");
+        let mut key_message_pairs = Vec::new();
+        for i in 0..nodes.0 {
+            for j in 0..nodes.1 {
+                let share = dealing.1[i][j];
                 let share = FrBytes(fr_to_bytes(&share));
                 let share = FsEncryptionPlaintext::from(&share);
-                (
-                    *receiver_keys
-                        .get(&index)
-                        .expect("There should be a public key for each share"),
-                    share,
-                )
-            })
-            .collect();
+                key_message_pairs.push((*receiver_keys.get(&(i as u32, j as u32)).unwrap(), share));
+            }
+        }
+
+        // TODO: May want to convert PublicCoefficients to bivar before passing to encrypt_and_prove
         encrypt_and_prove_el_gamal(encryption_seed, &key_message_pairs)
     }?;
 
-    let dealing = (public_coefficients, ciphertexts.0, ciphertexts.1);
+    let dealing = (dealing.0, ciphertexts.0, ciphertexts.1);
     Ok(dealing)
 }
 

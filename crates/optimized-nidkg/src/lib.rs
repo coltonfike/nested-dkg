@@ -12,9 +12,12 @@ use ic_crypto_internal_threshold_sig_bls12381::{
 };
 use ic_crypto_internal_types::{
     encrypt::forward_secure::groth20_bls12_381::FsEncryptionPublicKey,
-    sign::threshold_sig::ni_dkg::{
-        ni_dkg_groth20_bls12_381::{Dealing, Transcript, ZKProofDec},
-        Epoch,
+    sign::threshold_sig::{
+        ni_dkg::{
+            ni_dkg_groth20_bls12_381::{Dealing, Transcript, ZKProofDec},
+            Epoch,
+        },
+        public_key::bls12_381::PublicKeyBytes,
     },
 };
 use ic_crypto_internal_types::{
@@ -33,60 +36,114 @@ use std::{
 };
 use std::{fs::File, time::Instant};
 use tokio_stream::StreamExt;
+use types::bivariate::PublicCoefficients;
 use types::Id;
 
-pub fn generate_keypairs(n: usize) {
+pub fn generate_keypairs(n: usize, m: usize) {
     const KEY_GEN_ASSOCIATED_DATA: &[u8] = &[2u8, 8u8, 1u8, 2u8];
 
     let mut keypairs = Vec::new();
     for i in 0..n {
-        let (pk, sk) = create_forward_secure_key_pair_el_gamal(
-            Randomness::from(rand::thread_rng().gen::<[u8; 32]>()),
-            KEY_GEN_ASSOCIATED_DATA,
-        );
-        keypairs.push((pk, sk.tostring()));
+        keypairs.push(Vec::new());
+        for _ in 0..m {
+            let (pk, sk) = create_forward_secure_key_pair_el_gamal(
+                Randomness::from(rand::thread_rng().gen::<[u8; 32]>()),
+                KEY_GEN_ASSOCIATED_DATA,
+            );
+            keypairs[i].push((pk, sk.tostring()));
+        }
     }
 
     std::fs::write("keypairs", bincode::serialize(&keypairs).unwrap()).unwrap();
 }
 
-pub async fn run_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool, aws: bool) {
+pub async fn run_dkg(
+    my_id_i: usize,
+    my_id_j: usize,
+    n: usize,
+    m: usize,
+    d: usize,
+    t: usize,
+    t_prime: usize,
+    is_dealer: bool,
+    aws: bool,
+) {
     let addresses = {
         let mut addresses = BTreeMap::new();
         if aws {
-            let reader = BufReader::new(File::open("addresses").unwrap());
-            for (i, line) in reader.lines().enumerate() {
-                addresses.insert(Id::Univariate(i), line.unwrap());
+            let mut reader = BufReader::new(File::open("addresses").unwrap());
+
+            for i in 0..n {
+                for j in 0..m {
+                    let mut addr = String::new();
+                    reader.read_line(&mut addr).unwrap();
+                    addr.pop();
+                    addresses.insert(Id::Bivariate(i as usize, j as usize), addr);
+                }
+            }
+
+            for d in 0..d {
+                let mut addr = String::new();
+                reader.read_line(&mut addr).unwrap();
+                addr.pop();
+                addresses.insert(Id::Bivariate(n as usize, d), addr);
             }
         } else {
             let mut port = 30000;
-            for i in 0..n + d {
-                addresses.insert(Id::Univariate(i as usize), format!("127.0.0.1:{}", port));
+
+            for i in 0..n {
+                for j in 0..m {
+                    addresses.insert(
+                        Id::Bivariate(i as usize, j as usize),
+                        format!("127.0.0.1:{}", port),
+                    );
+                    port += 1;
+                }
+            }
+            for d in 0..d {
+                addresses.insert(Id::Bivariate(n as usize, d), format!("127.0.0.1:{}", port));
                 port += 1;
             }
         }
         addresses
     };
 
-    let keypairs: Vec<(FsEncryptionPublicKey, String)> =
+    let keypairs: Vec<Vec<(FsEncryptionPublicKey, String)>> =
         bincode::deserialize(&std::fs::read("keypairs").expect("unable to read keypairs"))
             .expect("unable to deserialize file");
 
     let mut receiver_keys = BTreeMap::new();
-    for (i, keypair) in keypairs.iter().enumerate() {
-        receiver_keys.insert(i as u32, keypair.0);
+    for i in 0..n {
+        for j in 0..m {
+            receiver_keys.insert((i as u32, j as u32), keypairs[i][j].0.clone());
+        }
     }
 
     if is_dealer {
-        run_single_dealer(my_id, n, d, t, receiver_keys, addresses).await;
+        println!("Starting dealer");
+        run_single_dealer(
+            my_id_i,
+            my_id_j,
+            n,
+            m,
+            d,
+            t,
+            t_prime,
+            receiver_keys,
+            addresses,
+        )
+        .await;
     } else {
         println!("starting receiver");
         run_single_node(
-            my_id,
+            my_id_i,
+            my_id_j,
             n,
+            m,
             d,
             t,
-            BIG::fromstring(keypairs[my_id].1.clone()),
+            t_prime,
+            BIG::fromstring(keypairs[my_id_i][my_id_j].1.clone()),
             addresses,
         )
         .await;
@@ -94,11 +151,14 @@ pub async fn run_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool
 }
 
 async fn run_single_dealer(
-    my_id: usize,
+    my_id_i: usize,
+    my_id_j: usize,
     n: usize,
+    m: usize,
     d: usize,
     t: usize,
-    receiver_keys: BTreeMap<u32, FsEncryptionPublicKey>,
+    t_prime: usize,
+    receiver_keys: BTreeMap<(u32, u32), FsEncryptionPublicKey>,
     addresses: BTreeMap<Id, String>,
 ) {
     //! this is required to generate dealing, but it is not used for any computation, so it's set to default values define by dfinity
@@ -119,83 +179,108 @@ async fn run_single_dealer(
 
     let ids = addresses
         .iter()
-        .filter_map(|(id, _)| {
-            if Id::Univariate(n) <= *id {
-                None
-            } else {
-                Some(*id)
+        .filter_map(|(id, _)| match id {
+            Id::Bivariate(i, j) => {
+                if *i == n {
+                    None
+                } else {
+                    Some(*id)
+                }
             }
+            _ => None,
         })
         .collect::<Vec<Id>>();
 
     let dealers = addresses
         .iter()
-        .filter_map(|(id, _)| {
-            if Id::Univariate(n) > *id || Id::Univariate(my_id + n) == *id {
-                None
-            } else {
-                Some(*id)
+        .filter_map(|(id, _)| match id {
+            Id::Bivariate(i, idx) => {
+                if *idx != my_id_j && *i == n {
+                    Some(*id)
+                } else {
+                    None
+                }
             }
+            _ => None,
         })
         .collect::<Vec<Id>>();
 
     let keygen_seed = Randomness::from(rand::thread_rng().gen::<[u8; 32]>());
     let encryption_seed = Randomness::from(rand::thread_rng().gen::<[u8; 32]>());
-    let threshold = NumberOfNodes::new(t as u32);
+    let threshold = (
+        NumberOfNodes::new(t as u32),
+        NumberOfNodes::new(t_prime as u32),
+    );
 
     let mut dealings = BTreeMap::new();
 
-    let mut node = Node::new(addresses, Id::Univariate(my_id + n)).await;
+    let mut node = Node::new(addresses, Id::Bivariate(my_id_i, my_id_j)).await;
+
+    println!("Dealer creating dealings");
 
     let dealing = create_dealing_el_gamal(
         keygen_seed,
         encryption_seed,
         threshold,
+        (n, m),
         &receiver_keys,
         epoch,
-        my_id as u32,
+        my_id_j as u32,
         None,
     )
     .unwrap();
 
-    dealings.insert(my_id as u32, (dealing.0.clone(), dealing.1.clone()));
+    dealings.insert(my_id_j as u32, (dealing.0.clone(), dealing.1.clone()));
+
+    println!("Dealing sending dealings to: {:?}", dealers);
 
     node.broadcast(
-        bincode::serialize(&(dealing.0, dealing.1, dealing.2))
+        bincode::serialize(&(dealing.0.serialize(), dealing.1, dealing.2))
             .unwrap()
             .as_slice(),
         dealers,
     )
     .await;
 
+    println!("Waiting for dealings");
     while dealings.len() < d {
         let (id, msg) = node.recv.next().await.expect("failed to read message");
         match id {
-            Id::Univariate(id) => {
-                if !dealings.contains_key(&((id - n) as u32)) {
-                    let dealing: (
-                        PublicCoefficientsBytes,
-                        Vec<(G1Bytes, Vec<G1Bytes>)>,
-                        ZKProofDec,
-                    ) = bincode::deserialize(&msg).unwrap();
-                    verify_dealing_el_gamal(
-                        (id - n) as u32,
-                        threshold,
-                        epoch,
-                        &receiver_keys,
-                        &dealing,
-                    )
-                    .unwrap();
-                    dealings.insert((id - n) as u32, (dealing.0, dealing.1));
+            Id::Bivariate(i, j) => {
+                if !dealings.contains_key(&((j) as u32)) {
+                    let dealing: (Vec<u8>, Vec<(G1Bytes, Vec<G1Bytes>)>, ZKProofDec) =
+                        bincode::deserialize(&msg).unwrap();
+                    // verify_dealing_el_gamal(
+                    //     (id - n) as u32,
+                    //     threshold,
+                    //     epoch,
+                    //     &receiver_keys,
+                    //     &dealing,
+                    // )
+                    // .unwrap();
+                    dealings.insert(
+                        (j) as u32,
+                        (
+                            PublicCoefficients::deserialize(dealing.0, t_prime),
+                            dealing.1,
+                        ),
+                    );
                 }
             }
             _ => (),
         }
     }
 
-    let transcript =
-        create_transcript_el_gamal(threshold, NumberOfNodes::new(n as u32), &dealings).unwrap();
+    println!("Making transcript");
+    let transcript = create_transcript_el_gamal(
+        threshold,
+        (NumberOfNodes::new(n as u32), NumberOfNodes::new(m as u32)),
+        &dealings,
+    )
+    .unwrap();
 
+    let transcript = (transcript.0.serialize(), transcript.1);
+    println!("Sent transcript");
     node.broadcast(bincode::serialize(&transcript).unwrap().as_slice(), ids)
         .await;
     std::thread::sleep(std::time::Duration::from_secs(20));
@@ -204,24 +289,35 @@ async fn run_single_dealer(
 }
 
 async fn run_single_node(
-    my_id: usize,
+    my_id_i: usize,
+    my_id_j: usize,
     n: usize,
+    m: usize,
     d: usize,
     t: usize,
+    t_prime: usize,
     sk: BIG,
     addresses: BTreeMap<Id, String>,
 ) {
-    let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
+    let mut node = Node::new(addresses, Id::Bivariate(my_id_i, my_id_j)).await;
     println!("waiting for transcript");
     let (_, msg) = node.recv.next().await.expect("failed to read message");
     println!("got transcript");
-    let transcript: (
-        PublicCoefficientsBytes,
-        BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>,
-    ) = bincode::deserialize(&msg).unwrap();
+    let transcript: (Vec<u8>, BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>) =
+        bincode::deserialize(&msg).unwrap();
 
-    let signing_key =
-        compute_threshold_signing_key_el_gamal(transcript.1, my_id as u32, &sk).unwrap();
+    let transcript = (
+        PublicCoefficients::deserialize(transcript.0, t_prime),
+        transcript.1,
+    );
+
+    let signing_key = compute_threshold_signing_key_el_gamal(
+        transcript.1,
+        (my_id_i as u32, my_id_j as u32),
+        (n, m),
+        &sk,
+    )
+    .unwrap();
     println!("got my signing key");
 
     let msg: [u8; 32] = [0; 32];
@@ -229,7 +325,11 @@ async fn run_single_node(
     verify_individual_signature(
         &msg,
         my_sig,
-        individual_public_key(&transcript.0, my_id as u32).unwrap(),
+        PublicKeyBytes::from(
+            transcript
+                .0
+                .individual_public_key((my_id_i as u32, my_id_j as u32)),
+        ),
     )
     .unwrap();
     println!("Signed message");

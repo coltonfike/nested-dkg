@@ -1,9 +1,9 @@
 use bivariate_dkg as bivariate;
 use nidkg;
 use types::{
-    BivariateDKGArgs, BivariateNiDKGArgs, BivariateShareFileArgs, BivariateThresholdSignatureArgs,
-    NiDKGKeyPairsArgs, UnivariateDKGArgs, UnivariateNiDKGArgs, UnivariateShareFileArgs,
-    UnivariateThresholdSignatureArgs,
+    BivariateDKGArgs, BivariateNiDKGArgs, BivariateNiDKGKeyPairsArgs, BivariateShareFileArgs,
+    BivariateThresholdSignatureArgs, NiDKGKeyPairsArgs, UnivariateDKGArgs, UnivariateNiDKGArgs,
+    UnivariateShareFileArgs, UnivariateThresholdSignatureArgs,
 };
 use univariate_dkg as univariate;
 
@@ -29,15 +29,15 @@ pub async fn bivariate_dkg(args: BivariateDKGArgs) {
 
 pub async fn univariate_nidkg(args: UnivariateNiDKGArgs) {
     if args.optimized {
-        optimized_nidkg::run_dkg(
-            args.node_index,
-            args.num_nodes,
-            args.num_dealers,
-            args.threshold,
-            args.is_dealer,
-            args.aws,
-        )
-        .await;
+        // optimized_nidkg::run_dkg(
+        //     args.node_index,
+        //     args.num_nodes,
+        //     args.num_dealers,
+        //     args.threshold,
+        //     args.is_dealer,
+        //     args.aws,
+        // )
+        // .await;
     } else {
         nidkg::run_dkg(
             args.node_index,
@@ -51,16 +51,31 @@ pub async fn univariate_nidkg(args: UnivariateNiDKGArgs) {
     }
 }
 
-pub fn bivariate_nidkg(args: BivariateNiDKGArgs) {
-    println!("TODO: Run bivariate ni dkg with args: {:?}", args);
+pub async fn bivariate_nidkg(args: BivariateNiDKGArgs) {
+    optimized_nidkg::run_dkg(
+        args.node_index_i,
+        args.node_index_j,
+        args.num_nodes_n,
+        args.num_nodes_m,
+        args.num_dealers,
+        args.threshold_t,
+        args.threshold_t_prime,
+        args.is_dealer,
+        args.aws,
+    )
+    .await;
 }
 
 pub fn generate_keypairs(args: NiDKGKeyPairsArgs) {
     if args.optimized {
-        optimized_nidkg::generate_keypairs(args.num_nodes);
+        // optimized_nidkg::generate_keypairs(args.num_nodes);
     } else {
         nidkg::generate_keypairs(args.num_nodes);
     }
+}
+
+pub fn bivariate_generate_keypairs(args: BivariateNiDKGKeyPairsArgs) {
+    optimized_nidkg::generate_keypairs(args.num_nodes_n, args.num_nodes_m);
 }
 
 pub async fn univariate_threshold_signature(args: UnivariateThresholdSignatureArgs) {

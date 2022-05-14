@@ -13,6 +13,7 @@ pub enum Command {
     UnivariateNiDKG(UnivariateNiDKGArgs),
     BivariateNiDKG(BivariateNiDKGArgs),
     NiDKGKeyPairs(NiDKGKeyPairsArgs),
+    BivariateNiDKGKeyPairs(BivariateNiDKGKeyPairsArgs),
     UnivariateThresholdSignature(UnivariateThresholdSignatureArgs),
     BivariateThresholdSignature(BivariateThresholdSignatureArgs),
     UnivariateShareFile(UnivariateShareFileArgs),
@@ -87,12 +88,28 @@ pub struct BivariateNiDKGArgs {
     pub threshold_t: usize,
     #[clap(short = 'p')]
     pub threshold_t_prime: usize,
+    #[clap(short = 'l')]
+    pub is_dealer: bool,
+    #[clap(short = 'a')]
+    pub aws: bool,
+    #[clap(short = 'o')]
+    pub optimized: bool,
 }
 
 #[derive(Args, Clone, Copy, Debug, Eq, PartialEq)]
 pub struct NiDKGKeyPairsArgs {
     #[clap(short = 'n')]
     pub num_nodes: usize,
+    #[clap(short = 'o')]
+    pub optimized: bool,
+}
+
+#[derive(Args, Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BivariateNiDKGKeyPairsArgs {
+    #[clap(short = 'n')]
+    pub num_nodes_n: usize,
+    #[clap(short = 'm')]
+    pub num_nodes_m: usize,
     #[clap(short = 'o')]
     pub optimized: bool,
 }

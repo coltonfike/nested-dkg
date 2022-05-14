@@ -136,6 +136,41 @@ impl PublicCoefficients {
     pub fn individual_public_key(&self, index: (u32, u32)) -> PublicKey {
         PublicKey(self.evaluate_at(&x_for_index(index.0), &x_for_index(index.1)))
     }
+
+    pub fn serialize(&self) -> Vec<u8> {
+        self.coefficients
+            .iter()
+            .flat_map(|coefficient| {
+                coefficient
+                    .iter()
+                    .flat_map(|coefficient| {
+                        coefficient
+                            .0
+                            .to_affine()
+                            .to_uncompressed()
+                            .as_ref()
+                            .to_vec()
+                    })
+                    .collect::<Vec<u8>>()
+            })
+            .collect()
+    }
+
+    pub fn deserialize(bytes: Vec<u8>, t_prime: usize) -> Self {
+        Self {
+            coefficients: bytes
+                .chunks_exact(192)
+                .map(|chunk| {
+                    PublicKey(G2Projective::from(
+                        &G2Affine::from_uncompressed_unchecked(chunk.try_into().unwrap()).unwrap(),
+                    ))
+                })
+                .collect::<Vec<PublicKey>>()
+                .chunks_exact(t_prime)
+                .map(|chunk| chunk.to_vec())
+                .collect(),
+        }
+    }
 }
 
 // TODO: improve this with iterators

@@ -1504,6 +1504,7 @@ version = "0.8.0"
 dependencies = [
  "arrayvec",
  "base64 0.11.0",
+ "bivariate-dkg",
  "bls12_381",
  "ff 0.10.1",
  "hex",
@@ -1532,6 +1533,7 @@ dependencies = [
  "serde_json",
  "simple_asn1",
  "strum_macros",
+ "types",
  "zeroize",
 ]
 

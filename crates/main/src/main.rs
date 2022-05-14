@@ -9,8 +9,9 @@ async fn main() {
         Command::UnivariateDKG(args) => univariate_dkg(args).await,
         Command::BivariateDKG(args) => bivariate_dkg(args).await,
         Command::UnivariateNiDKG(args) => univariate_nidkg(args.clone()).await,
-        Command::BivariateNiDKG(args) => bivariate_nidkg(args.clone()),
+        Command::BivariateNiDKG(args) => bivariate_nidkg(args.clone()).await,
         Command::NiDKGKeyPairs(args) => generate_keypairs(args.clone()),
+        Command::BivariateNiDKGKeyPairs(args) => bivariate_generate_keypairs(args.clone()),
         Command::UnivariateThresholdSignature(args) => {
             univariate_threshold_signature(args.clone()).await
         }
