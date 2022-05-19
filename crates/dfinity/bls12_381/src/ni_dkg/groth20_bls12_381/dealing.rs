@@ -15,6 +15,7 @@ use crate::{
 };
 use ic_crypto_internal_bls12381_common::fr_to_bytes;
 use ic_crypto_internal_bls12381_serde_miracl::{FrBytes, G1Bytes};
+use ic_crypto_internal_types::encrypt::forward_secure::groth20_bls12_381::FsEncryptionCiphertext;
 use ic_types::crypto::threshold_sig::ni_dkg::NiDkgId;
 use ic_types::{NodeIndex, NumberOfNodes, Randomness};
 use miracl_core::bls12381::ecp::ECP;
@@ -164,10 +165,8 @@ pub fn create_dealing_el_gamal(
     epoch: Epoch,
     dealer_index: NodeIndex,
     resharing_secret: Option<ThresholdSecretKeyBytes>,
-) -> Result<
-    (PublicCoefficients, Vec<(G1Bytes, Vec<G1Bytes>)>, ZKProofDec),
-    CspDkgCreateReshareDealingError,
-> {
+) -> Result<(PublicCoefficients, FsEncryptionCiphertext, ZKProofDec), CspDkgCreateReshareDealingError>
+{
     let dealing = generate_shares(
         (nodes.0 as u32, nodes.1 as u32),
         (threshold.0.get() as usize, threshold.1.get() as usize),
@@ -185,7 +184,13 @@ pub fn create_dealing_el_gamal(
         }
 
         // TODO: May want to convert PublicCoefficients to bivar before passing to encrypt_and_prove
-        encrypt_and_prove_el_gamal(encryption_seed, &key_message_pairs)
+        encrypt_and_prove_el_gamal(
+            encryption_seed,
+            &key_message_pairs,
+            epoch,
+            // &dealing.0,
+            &dealer_index.to_be_bytes(),
+        )
     }?;
 
     let dealing = (dealing.0, ciphertexts.0, ciphertexts.1);
@@ -252,20 +257,16 @@ pub fn verify_dealing(
 
 pub fn verify_dealing_el_gamal(
     dealer_index: NodeIndex,
-    threshold: NumberOfNodes,
+    threshold: (NumberOfNodes, NumberOfNodes),
     epoch: Epoch,
-    receiver_keys: &BTreeMap<NodeIndex, FsEncryptionPublicKey>,
-    dealing: &(
-        PublicCoefficientsBytes,
-        Vec<(G1Bytes, Vec<G1Bytes>)>,
-        ZKProofDec,
-    ),
+    receiver_keys: &BTreeMap<(NodeIndex, NodeIndex), FsEncryptionPublicKey>,
+    dealing: &(PublicCoefficients, FsEncryptionCiphertext, ZKProofDec),
 ) -> Result<(), CspDkgVerifyDealingError> {
-    let number_of_receivers =
-        number_of_receivers(receiver_keys).map_err(CspDkgVerifyDealingError::SizeError)?;
-    verify_threshold(threshold, number_of_receivers)
-        .map_err(CspDkgVerifyDealingError::InvalidThresholdError)?;
-    verify_receiver_indices(receiver_keys, number_of_receivers)?;
+    // let number_of_receivers =
+    //     number_of_receivers(receiver_keys).map_err(CspDkgVerifyDealingError::SizeError)?;
+    // verify_threshold(threshold, number_of_receivers)
+    //     .map_err(CspDkgVerifyDealingError::InvalidThresholdError)?;
+    // verify_receiver_indices(receiver_keys, number_of_receivers)?;
     // verify_all_shares_are_present_and_well_formatted(dealing, number_of_receivers)
     //     .map_err(CspDkgVerifyDealingError::InvalidDealingError)?;
     // verify_public_coefficients_match_threshold(dealing, threshold)

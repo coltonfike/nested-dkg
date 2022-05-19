@@ -4,13 +4,16 @@ use super::dealing::{
     verify_all_shares_are_present_and_well_formatted, verify_public_coefficients_match_threshold,
     verify_threshold,
 };
+use super::encryption::conversions::ciphertext_into_miracl;
 use super::encryption::{decrypt, decrypt_el_gamal};
-use crate::api::ni_dkg_errors;
+use super::types::FsEncryptionSecretKey;
+use crate::api::ni_dkg_errors::{self, DecryptError};
 use crate::crypto::x_for_index;
 use crate::types as threshold_types;
 use ic_crypto_internal_bls12381_common::fr_from_bytes;
 use ic_crypto_internal_bls12381_serde_miracl::G1Bytes;
 use ic_crypto_internal_fs_ni_dkg::forward_secure::SecretKey as ForwardSecureSecretKey;
+use ic_crypto_internal_types::encrypt::forward_secure::groth20_bls12_381::FsEncryptionCiphertext;
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381 as g20;
 use ic_types::{NodeIndex, NumberOfNodes};
 use miracl_core::bls12381::big::BIG;
@@ -66,11 +69,11 @@ use types::bivariate::PublicCoefficients;
 pub fn create_transcript_el_gamal(
     threshold: (NumberOfNodes, NumberOfNodes),
     number_of_receivers: (NumberOfNodes, NumberOfNodes),
-    dealings: &BTreeMap<NodeIndex, (PublicCoefficients, Vec<(G1Bytes, Vec<G1Bytes>)>)>,
+    dealings: &BTreeMap<NodeIndex, (PublicCoefficients, FsEncryptionCiphertext)>,
 ) -> Result<
     (
         PublicCoefficients,
-        BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>,
+        BTreeMap<NodeIndex, FsEncryptionCiphertext>,
     ),
     CspDkgCreateTranscriptError,
 > {
@@ -78,7 +81,7 @@ pub fn create_transcript_el_gamal(
     // verify_threshold(threshold, number_of_receivers)
     //     .map_err(CspDkgCreateTranscriptError::InvalidThresholdError)?;
 
-    let receiver_data: Result<BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>, _> = dealings
+    let receiver_data: Result<BTreeMap<NodeIndex, FsEncryptionCiphertext>, _> = dealings
         .iter()
         .map(|(dealer_index, dealing)| {
             // verify_all_shares_are_present_and_well_formatted(dealing, number_of_receivers)
@@ -365,7 +368,7 @@ pub fn compute_threshold_signing_key(
 }
 
 pub fn compute_threshold_signing_key_el_gamal(
-    transcript: BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>,
+    transcript: BTreeMap<NodeIndex, FsEncryptionCiphertext>,
     receiver_index: (NodeIndex, NodeIndex),
     nodes: (usize, usize),
     fs_secret_key: &BIG,
@@ -375,20 +378,14 @@ pub fn compute_threshold_signing_key_el_gamal(
         transcript
             .iter()
             .map(|(dealer_index, encrypted_shares)| {
-                let mut shares = Vec::new();
-                let mut k = 0;
-                for i in 0..nodes.0 {
-                    shares.push(Vec::new());
-                    for j in 0..nodes.1 {
-                        shares[i].push(encrypted_shares[k].clone());
-                        k += 1;
-                    }
-                }
+                let ciphertext = ciphertext_into_miracl(encrypted_shares).unwrap();
 
-                let fs_plaintext = decrypt_el_gamal(
-                    &shares[receiver_index.0 as usize][receiver_index.1 as usize],
-                    fs_secret_key,
-                    receiver_index.0,
+                let t = std::time::Instant::now();
+                let fs_plaintext = decrypt_el_gamal(&ciphertext, fs_secret_key, receiver_index);
+                println!(
+                    "time to decrypt for dealer {}: {:?}",
+                    dealer_index,
+                    t.elapsed()
                 );
                 let secret_key = FrBytes::from(&fs_plaintext);
                 let secret_key = fr_from_bytes(&secret_key.0);

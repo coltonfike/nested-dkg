@@ -11,7 +11,7 @@ use ic_crypto_internal_threshold_sig_bls12381::{
     types::public_coefficients::conversions::InternalPublicCoefficients,
 };
 use ic_crypto_internal_types::{
-    encrypt::forward_secure::groth20_bls12_381::FsEncryptionPublicKey,
+    encrypt::forward_secure::groth20_bls12_381::{FsEncryptionCiphertext, FsEncryptionPublicKey},
     sign::threshold_sig::{
         ni_dkg::{
             ni_dkg_groth20_bls12_381::{Dealing, Transcript, ZKProofDec},
@@ -248,23 +248,16 @@ async fn run_single_dealer(
         match id {
             Id::Bivariate(i, j) => {
                 if !dealings.contains_key(&((j) as u32)) {
-                    let dealing: (Vec<u8>, Vec<(G1Bytes, Vec<G1Bytes>)>, ZKProofDec) =
+                    let dealing: (Vec<u8>, FsEncryptionCiphertext, ZKProofDec) =
                         bincode::deserialize(&msg).unwrap();
-                    // verify_dealing_el_gamal(
-                    //     (id - n) as u32,
-                    //     threshold,
-                    //     epoch,
-                    //     &receiver_keys,
-                    //     &dealing,
-                    // )
-                    // .unwrap();
-                    dealings.insert(
-                        (j) as u32,
-                        (
-                            PublicCoefficients::deserialize(dealing.0, t_prime),
-                            dealing.1,
-                        ),
+                    let dealing = (
+                        PublicCoefficients::deserialize(dealing.0.clone(), t_prime),
+                        dealing.1,
+                        dealing.2,
                     );
+                    verify_dealing_el_gamal(j as u32, threshold, epoch, &receiver_keys, &dealing)
+                        .unwrap();
+                    dealings.insert((j) as u32, (dealing.0, dealing.1));
                 }
             }
             _ => (),
@@ -303,13 +296,15 @@ async fn run_single_node(
     println!("waiting for transcript");
     let (_, msg) = node.recv.next().await.expect("failed to read message");
     println!("got transcript");
-    let transcript: (Vec<u8>, BTreeMap<NodeIndex, Vec<(G1Bytes, Vec<G1Bytes>)>>) =
+    let transcript: (Vec<u8>, BTreeMap<NodeIndex, FsEncryptionCiphertext>) =
         bincode::deserialize(&msg).unwrap();
 
     let transcript = (
         PublicCoefficients::deserialize(transcript.0, t_prime),
         transcript.1,
     );
+
+    println!("Attempting to get signing key");
 
     let signing_key = compute_threshold_signing_key_el_gamal(
         transcript.1,

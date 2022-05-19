@@ -860,7 +860,6 @@ pub fn enc_chunks(
         })
         .collect();
 
-    // CHANGED!!
     let extended_tau = extend_tau(&cc, &rr, &ss, tau, associated_data);
     let id = ftau(&extended_tau, sys).expect("extended_tau not the correct size");
     let mut zz = Vec::new();
@@ -869,8 +868,6 @@ pub fn enc_chunks(
         tmp.add(&g2mul(&sys.h, &s[j]));
         zz.push(tmp);
     }
-    // END CHANGED!!
-
     Some((Crsz { cc, rr, ss, zz }, ToxicWaste { spec_r, s }))
 }
 

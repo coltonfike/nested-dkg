@@ -84,76 +84,37 @@ pub fn kgen(associated_data: &[u8], rng: &mut impl RAND) -> (PublicKeyWithPop, B
     )
 }
 
-pub fn enc_chunks(
-    sij: &[Vec<isize>],
-    pks: Vec<&ECP>,
-    rng: &mut impl RAND,
-) -> (Vec<(G1Bytes, Vec<G1Bytes>)>, Vec<BIG>) {
-    let spec_p = BIG::new_ints(&rom::CURVE_ORDER);
-    let g1 = ECP::generator();
-    let mut ys = Vec::new();
-
-    let ciphertext = sij
-        .iter()
-        .zip(pks.iter())
-        .map(|(si, pk)| {
-            let y = BIG::randomnum(&spec_p, rng);
-            let c1 = g1.mul(&y);
-            let s = pk.mul(&y);
-            let c2: Vec<G1Bytes> = si
-                .iter()
-                .map(|s_| {
-                    let mut m = g1.mul(&BIG::new_int(*s_));
-                    m.add(&s);
-                    miracl_g1_to_bytes(&m)
-                })
-                .collect();
-            ys.push(y);
-            (miracl_g1_to_bytes(&c1), c2)
-        })
-        .collect();
-    (ciphertext, ys)
-}
-
-pub fn dec_chunks(sk: &BIG, i: usize, ciphertext: &(G1Bytes, Vec<G1Bytes>)) -> Vec<isize> {
-    // TODO: deserialize
-    let c1 = miracl_g1_from_bytes(&ciphertext.0 .0).unwrap();
-    let c2: Vec<ECP> = ciphertext
-        .1
-        .iter()
-        .map(|bytes| miracl_g1_from_bytes(&bytes.0).unwrap())
-        .collect();
-    let ciphertext = (c1, c2);
+pub fn dec_chunks(sk: &BIG, i: usize, ciphertext: &Crsz) -> Vec<isize> {
+    let c1 = &ciphertext.rr;
+    let c2 = &ciphertext.cc[i];
 
     let g1 = ECP::generator();
     let g2 = ECP2::generator();
 
-    let mut s = ciphertext.0.mul(sk);
-    s.neg();
-
-    // let mut c = ciphertext.1.clone();
-    // let mut decrypt = Vec::new();
-    // for j in 0..c.len() {
-    //     c[j].add(&s);
-    //     decrypt.push(c[j].clone());
-    // }
-    let mut c = ciphertext.1.clone();
     let mut decrypt = Vec::new();
-    for j in 0..c.len() {
-        c[j].add(&s);
-        decrypt.push(pair::fexp(&pair::ate(&g2, &c[j])));
+
+    for j in 0..c2.len() {
+        let mut s = c1[j].mul(sk);
+        s.neg();
+
+        let mut c = c2[j].clone();
+
+        c.add(&s);
+        decrypt.push(pair::fexp(&pair::ate(&g2, &c)));
     }
 
     let base = pair::fexp(&pair::ate(&g2, &g1));
     let mut dlogs = Vec::new();
 
-    for item in decrypt.iter() {
+    for (j, item) in decrypt.iter().enumerate() {
+        let t = std::time::Instant::now();
         match baby_giant(item, &base, 0, CHUNK_SIZE) {
             // Happy path: honest DKG participants.
             Some(dlog) => dlogs.push(BIG::new_int(dlog)),
             // It may take hours to brute force a cheater's discrete log.
             None => (),
         }
+        // println!("baby_giant took {:?} for chunk {}", t.elapsed(), j);
     }
 
     // Clippy dislikes `FrBytes::SIZE` or `MESSAGE_BYTES` instead of `32`.
@@ -178,29 +139,4 @@ pub fn dec_chunks(sk: &BIG, i: usize, ciphertext: &(G1Bytes, Vec<G1Bytes>)) -> V
         .map(|x| 256 * (x[0] as isize) + (x[1] as isize))
         .collect();
     redundant
-}
-
-#[cfg(test)]
-mod tests {
-    use rand::Rng;
-
-    use super::*;
-    use crate::utils::RAND_ChaCha20;
-    use ic_types::{
-        crypto::threshold_sig::ni_dkg::{NiDkgId, NiDkgTag, NiDkgTargetId, NiDkgTargetSubnet},
-        Height, NumberOfNodes, PrincipalId, Randomness, SubnetId,
-    };
-
-    #[test]
-    fn test_abc123() {
-        let mut rng =
-            RAND_ChaCha20::new(Randomness::from(rand::thread_rng().gen::<[u8; 32]>()).get());
-        let keys = kgen(&[], &mut rng);
-
-        let m: Vec<isize> = vec![0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75];
-        // let (c1, c2) = enc_chunks(m, vec![&keys.0.key_value], &mut rng);
-
-        // let recovered = dec_chunks(&keys.1, 0, (c1, c2));
-        // println!("{:?}", recovered);
-    }
 }
