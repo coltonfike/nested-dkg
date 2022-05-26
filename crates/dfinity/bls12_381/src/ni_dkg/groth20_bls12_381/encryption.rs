@@ -34,7 +34,7 @@ use miracl_core::bls12381::big::BIG;
 use miracl_core::bls12381::ecp::ECP;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use types::bivariate::PublicCoefficients;
+use types::bivariate::{Polynomial, PublicCoefficients};
 
 pub(crate) mod conversions;
 
@@ -255,9 +255,9 @@ pub fn encrypt_and_prove_el_gamal(
     seed: Randomness,
     key_message_pairs: &[(FsEncryptionPublicKey, FsEncryptionPlaintext)],
     epoch: Epoch,
-    public_coefficients: &PublicCoefficientsBytes,
+    public_coefficients: &Vec<PublicCoefficientsBytes>,
     associated_data: &[u8],
-) -> Result<(FsEncryptionCiphertext, ZKProofDec, ZKProofShare), EncryptAndZKProveError> {
+) -> Result<(FsEncryptionCiphertext, ZKProofDec, Vec<ZKProofShare>), EncryptAndZKProveError> {
     let public_keys: Result<Vec<miracl::ECP>, EncryptAndZKProveError> = key_message_pairs
         .as_ref()
         .iter()
@@ -308,13 +308,19 @@ pub fn encrypt_and_prove_el_gamal(
         &mut rng,
     );
 
-    // let pc = public_coefficients.coefficients;
+    let mut sharing_proofs = Vec::new();
 
-    let miracl_public_coefficients = public_coefficients_to_miracl(public_coefficients)
-        .map_err(|_| EncryptAndZKProveError::MalformedPublicCoefficients)?;
-    let sharing_proof = prove_sharing(
+    let mut pc = Vec::new();
+    for i in 0..public_coefficients.len() {
+        let miracl_public_coefficients = public_coefficients_to_miracl(&public_coefficients[i])
+            .map_err(|_| EncryptAndZKProveError::MalformedPublicCoefficients)?;
+        pc.push(miracl_public_coefficients);
+    }
+
+    let sharing_proof = prove_sharing_el_gamal(
+        // &public_keys,
         &public_keys,
-        &miracl_public_coefficients,
+        &pc,
         &ciphertext,
         &plaintext_chunks,
         &toxic_waste,
@@ -324,7 +330,7 @@ pub fn encrypt_and_prove_el_gamal(
     Ok((
         ciphertext_from_miracl(&ciphertext),
         chunking_proof_from_miracl(&chunking_proof),
-        sharing_proof_from_miracl(&sharing_proof),
+        sharing_proofs,
     ))
 }
 
@@ -470,6 +476,60 @@ fn prove_sharing(
     )
 }
 
+fn prove_sharing_el_gamal(
+    receiver_fs_public_keys: &[miracl::ECP],
+    public_coefficients: &Vec<Vec<miracl::ECP2>>,
+    ciphertext: &crypto::Crsz,
+    plaintext_chunks: &[Vec<isize>],
+    toxic_waste: &crypto::ToxicWaste,
+    rng: &mut crypto::RAND_ChaCha20,
+) -> Vec<ZKProofShare> {
+    // Convert fs encryption data:
+
+    let combined_r_scalar: miracl::BIG = util::big_from_big_endian_chunks(&toxic_waste.spec_r);
+    let combined_r = util::ecp_from_big_endian_chunks(&ciphertext.rr);
+
+    let mut proofs = Vec::new();
+    for i in 0..public_coefficients.len() {
+        let cc = ciphertext.cc[11 * i..11 * (i + 1)].to_vec();
+        let plaintext_chunk = plaintext_chunks[11 * i..11 * (i + 1)].to_vec();
+        let pub_keys = receiver_fs_public_keys[11 * i..11 * (i + 1)].to_vec();
+
+        let combined_ciphertexts: Vec<miracl::ECP> =
+            cc.iter().map(util::ecp_from_big_endian_chunks).collect();
+        let combined_plaintexts: Vec<miracl::BIG> = plaintext_chunk
+            .iter()
+            .map(|receiver_chunks| {
+                util::big_from_big_endian_chunks(
+                    &receiver_chunks
+                        .iter()
+                        .copied()
+                        .map(miracl::BIG::new_int)
+                        .collect(),
+                )
+            })
+            .collect();
+
+        let proof = crypto::prove_sharing(
+            &crypto::SharingInstance {
+                g1_gen: miracl::ECP::generator(),
+                g2_gen: miracl::ECP2::generator(),
+                public_keys: pub_keys,
+                public_coefficients: public_coefficients[i].clone(),
+                combined_randomizer: combined_r.clone(),
+                combined_ciphertexts,
+            },
+            &crypto::SharingWitness {
+                scalar_r: combined_r_scalar,
+                scalars_s: combined_plaintexts,
+            },
+            rng,
+        );
+        proofs.push(sharing_proof_from_miracl(&proof));
+    }
+    proofs
+}
+
 /// Verifies zero-knowledge proofs associated to forward-secure encryptions.
 ///
 /// # Errors
@@ -596,10 +656,10 @@ pub fn verify_zk_proofs(
 pub fn verify_zk_proofs_el_gamal(
     epoch: Epoch,
     receiver_fs_public_keys: &BTreeMap<(NodeIndex, NodeIndex), FsEncryptionPublicKey>,
-    public_coefficients: &PublicCoefficients,
+    public_coefficients: &Vec<PublicCoefficientsBytes>,
     ciphertexts: &FsEncryptionCiphertext,
     chunking_proof: &ZKProofDec,
-    sharing_proof: &ZKProofShare,
+    sharing_proof: &Vec<ZKProofShare>,
     associated_data: &[u8],
 ) -> Result<(), CspDkgVerifyDealingError> {
     // Conversions
@@ -652,56 +712,46 @@ pub fn verify_zk_proofs_el_gamal(
     })?;
 
     // More conversions
-
-    use crate::types::PublicKey;
-
-    let pub_coeffs: Vec<PublicKey> = public_coefficients
-        .coefficients
-        .iter()
-        .flatten()
-        .map(|pk| PublicKey(pk.0))
-        .collect();
-    use crate::types::PublicCoefficients;
-    let pub_coeffs = PublicCoefficients {
-        coefficients: pub_coeffs,
-    };
-
-    let pub_coeffs = PublicCoefficientsBytes::from(&pub_coeffs);
-
-    let miracl_public_coefficients = public_coefficients_to_miracl(&pub_coeffs).map_err(|_| {
-        CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
-            message: "Could not parse public coefficients".to_string(),
-        })
-    })?;
     let combined_r = util::ecp_from_big_endian_chunks(&ciphertext.rr);
-    let combined_ciphertexts: Vec<miracl::ECP> = ciphertext
-        .cc
-        .iter()
-        .map(util::ecp_from_big_endian_chunks)
-        .collect();
-    let sharing_proof = sharing_proof_into_miracl(sharing_proof).map_err(|_| {
-        CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
-            message: "Could not parse proof of correct sharing".to_string(),
-        })
-    })?;
+    for i in 0..sharing_proof.len() {
+        let miracl_public_coefficients = public_coefficients_to_miracl(&public_coefficients[i])
+            .map_err(|_| {
+                CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
+                    message: "Could not parse public coefficients".to_string(),
+                })
+            })?;
 
-    crypto::verify_sharing(
-        &crypto::SharingInstance {
-            g1_gen: miracl::ECP::generator(),
-            g2_gen: miracl::ECP2::generator(),
-            public_keys,
-            public_coefficients: miracl_public_coefficients,
-            combined_randomizer: combined_r,
-            combined_ciphertexts,
-        },
-        &sharing_proof,
-    )
-    .map_err(|e| {
-        let error = InvalidArgumentError {
-            message: "Invalid sharing proof".to_string(),
-        };
-        CspDkgVerifyDealingError::InvalidDealingError(error)
-    })
+        let pub_keys = public_keys[11 * i..11 * (i + 1)].to_vec();
+        let cc = ciphertext.cc[11 * i..11 * (i + 1)].to_vec();
+
+        let combined_ciphertexts: Vec<miracl::ECP> =
+            cc.iter().map(util::ecp_from_big_endian_chunks).collect();
+
+        let sharing_proof = sharing_proof_into_miracl(&sharing_proof[i]).map_err(|_| {
+            CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
+                message: "Could not parse proof of correct sharing".to_string(),
+            })
+        })?;
+
+        crypto::verify_sharing(
+            &crypto::SharingInstance {
+                g1_gen: miracl::ECP::generator(),
+                g2_gen: miracl::ECP2::generator(),
+                public_keys: pub_keys,
+                public_coefficients: miracl_public_coefficients,
+                combined_randomizer: combined_r.clone(),
+                combined_ciphertexts,
+            },
+            &sharing_proof,
+        )
+        .map_err(|e| {
+            let error = InvalidArgumentError {
+                message: "Invalid sharing proof".to_string(),
+            };
+            CspDkgVerifyDealingError::InvalidDealingError(error)
+        })?;
+    }
+    Ok(())
 }
 
 mod util {

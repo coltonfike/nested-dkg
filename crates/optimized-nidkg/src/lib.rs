@@ -235,9 +235,15 @@ async fn run_single_dealer(
     println!("Dealing sending dealings to: {:?}", dealers);
 
     node.broadcast(
-        bincode::serialize(&(dealing.0.serialize(), dealing.1, dealing.2, dealing.3))
-            .unwrap()
-            .as_slice(),
+        bincode::serialize(&(
+            dealing.0.serialize(),
+            dealing.1,
+            dealing.2,
+            dealing.3,
+            dealing.4,
+        ))
+        .unwrap()
+        .as_slice(),
         dealers,
     )
     .await;
@@ -248,13 +254,19 @@ async fn run_single_dealer(
         match id {
             Id::Bivariate(i, j) => {
                 if !dealings.contains_key(&((j) as u32)) {
-                    let dealing: (Vec<u8>, FsEncryptionCiphertext, ZKProofDec, ZKProofShare) =
-                        bincode::deserialize(&msg).unwrap();
+                    let dealing: (
+                        Vec<u8>,
+                        FsEncryptionCiphertext,
+                        ZKProofDec,
+                        Vec<ZKProofShare>,
+                        Vec<PublicCoefficientsBytes>,
+                    ) = bincode::deserialize(&msg).unwrap();
                     let dealing = (
                         PublicCoefficients::deserialize(dealing.0.clone(), t_prime),
                         dealing.1,
                         dealing.2,
                         dealing.3,
+                        dealing.4,
                     );
                     verify_dealing_el_gamal(j as u32, threshold, epoch, &receiver_keys, &dealing)
                         .unwrap();
