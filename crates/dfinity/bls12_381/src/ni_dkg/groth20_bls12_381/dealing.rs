@@ -27,11 +27,12 @@ use std::convert::TryFrom;
 // "Old style" CSP types, used for the threshold keys:
 use crate::types::{SecretKey as ThresholdSecretKey, SecretKeyBytes as ThresholdSecretKeyBytes};
 use bivariate_dkg::dkg::generate_shares;
-use types::bivariate::{Polynomial, PublicCoefficients};
+use types::bivariate::PublicCoefficients;
 // "New style" internal types, used for the NiDKG:
 use super::ALGORITHM_ID;
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381::{
     Dealing, FsEncryptionPlaintext, FsEncryptionPublicKey, PublicCoefficientsBytes, ZKProofDec,
+    ZKProofShare,
 };
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::Epoch;
 
@@ -165,8 +166,15 @@ pub fn create_dealing_el_gamal(
     epoch: Epoch,
     dealer_index: NodeIndex,
     resharing_secret: Option<ThresholdSecretKeyBytes>,
-) -> Result<(PublicCoefficients, FsEncryptionCiphertext, ZKProofDec), CspDkgCreateReshareDealingError>
-{
+) -> Result<
+    (
+        PublicCoefficients,
+        FsEncryptionCiphertext,
+        ZKProofDec,
+        ZKProofShare,
+    ),
+    CspDkgCreateReshareDealingError,
+> {
     let dealing = generate_shares(
         (nodes.0 as u32, nodes.1 as u32),
         (threshold.0.get() as usize, threshold.1.get() as usize),
@@ -183,17 +191,33 @@ pub fn create_dealing_el_gamal(
             }
         }
 
+        use crate::types::PublicKey;
+
+        let pub_coeffs: Vec<PublicKey> = dealing
+            .0
+            .coefficients
+            .iter()
+            .flatten()
+            .map(|pk| PublicKey(pk.0))
+            .collect();
+        use crate::types::PublicCoefficients;
+        let pub_coeffs = PublicCoefficients {
+            coefficients: pub_coeffs,
+        };
+
+        let pub_coeffs = PublicCoefficientsBytes::from(&pub_coeffs);
+
         // TODO: May want to convert PublicCoefficients to bivar before passing to encrypt_and_prove
         encrypt_and_prove_el_gamal(
             encryption_seed,
             &key_message_pairs,
             epoch,
-            // &dealing.0,
+            &pub_coeffs,
             &dealer_index.to_be_bytes(),
         )
     }?;
 
-    let dealing = (dealing.0, ciphertexts.0, ciphertexts.1);
+    let dealing = (dealing.0, ciphertexts.0, ciphertexts.1, ciphertexts.2);
     Ok(dealing)
 }
 
@@ -260,7 +284,12 @@ pub fn verify_dealing_el_gamal(
     threshold: (NumberOfNodes, NumberOfNodes),
     epoch: Epoch,
     receiver_keys: &BTreeMap<(NodeIndex, NodeIndex), FsEncryptionPublicKey>,
-    dealing: &(PublicCoefficients, FsEncryptionCiphertext, ZKProofDec),
+    dealing: &(
+        PublicCoefficients,
+        FsEncryptionCiphertext,
+        ZKProofDec,
+        ZKProofShare,
+    ),
 ) -> Result<(), CspDkgVerifyDealingError> {
     // let number_of_receivers =
     //     number_of_receivers(receiver_keys).map_err(CspDkgVerifyDealingError::SizeError)?;
@@ -277,7 +306,7 @@ pub fn verify_dealing_el_gamal(
         &dealing.0,
         &dealing.1,
         &dealing.2,
-        // &dealing.zk_proof_correct_sharing,
+        &dealing.3,
         &dealer_index.to_be_bytes(),
     )?;
     Ok(())

@@ -255,9 +255,9 @@ pub fn encrypt_and_prove_el_gamal(
     seed: Randomness,
     key_message_pairs: &[(FsEncryptionPublicKey, FsEncryptionPlaintext)],
     epoch: Epoch,
-    // public_coefficients: &PublicCoefficientsBytes,
+    public_coefficients: &PublicCoefficientsBytes,
     associated_data: &[u8],
-) -> Result<(FsEncryptionCiphertext, ZKProofDec), EncryptAndZKProveError> {
+) -> Result<(FsEncryptionCiphertext, ZKProofDec, ZKProofShare), EncryptAndZKProveError> {
     let public_keys: Result<Vec<miracl::ECP>, EncryptAndZKProveError> = key_message_pairs
         .as_ref()
         .iter()
@@ -307,21 +307,24 @@ pub fn encrypt_and_prove_el_gamal(
         &toxic_waste,
         &mut rng,
     );
-    // let miracl_public_coefficients = public_coefficients_to_miracl(public_coefficients)
-    //     .map_err(|_| EncryptAndZKProveError::MalformedPublicCoefficients)?;
-    // let sharing_proof = prove_sharing(
-    //     &public_keys,
-    //     &miracl_public_coefficients,
-    //     &ciphertext,
-    //     &plaintext_chunks,
-    //     &toxic_waste,
-    //     &mut rng,
-    // );
+
+    // let pc = public_coefficients.coefficients;
+
+    let miracl_public_coefficients = public_coefficients_to_miracl(public_coefficients)
+        .map_err(|_| EncryptAndZKProveError::MalformedPublicCoefficients)?;
+    let sharing_proof = prove_sharing(
+        &public_keys,
+        &miracl_public_coefficients,
+        &ciphertext,
+        &plaintext_chunks,
+        &toxic_waste,
+        &mut rng,
+    );
 
     Ok((
         ciphertext_from_miracl(&ciphertext),
         chunking_proof_from_miracl(&chunking_proof),
-        // sharing_proof_from_miracl(&sharing_proof),
+        sharing_proof_from_miracl(&sharing_proof),
     ))
 }
 
@@ -596,7 +599,7 @@ pub fn verify_zk_proofs_el_gamal(
     public_coefficients: &PublicCoefficients,
     ciphertexts: &FsEncryptionCiphertext,
     chunking_proof: &ZKProofDec,
-    // sharing_proof: &ZKProofShare,
+    sharing_proof: &ZKProofShare,
     associated_data: &[u8],
 ) -> Result<(), CspDkgVerifyDealingError> {
     // Conversions
@@ -625,33 +628,11 @@ pub fn verify_zk_proofs_el_gamal(
         })
     })?;
 
-    // crypto::verify_ciphertext_integrity(&ciphertext, &tau.0[..], associated_data, &SYS_PARAMS)
-    //     .map_err(|_| {
-    //         CspDkgVerifyDealingError::InvalidDealingError(InvalidArgumentError {
-    //             message: "Ciphertext integrity check failed".to_string(),
-    //         })
-    //     })?;
-
     let chunking_proof = chunking_proof_into_miracl(chunking_proof).map_err(|_| {
         CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
             message: "Could not parse proof of correct encryption".to_string(),
         })
     })?;
-
-    // let (ciphertext_chunks, randomizers_r) = {
-    //     let mut ciphertext_chunks = Vec::new();
-    //     let mut randomizers_r = Vec::new();
-    //     for (randomizer_r, ciphertext_chunk) in ciphertexts {
-    //         ciphertext_chunks.push(
-    //             ciphertext_chunk
-    //                 .iter()
-    //                 .map(|chunk| miracl_g1_from_bytes(&chunk.0).unwrap())
-    //                 .collect(),
-    //         );
-    //         randomizers_r.push(miracl_g1_from_bytes(&randomizer_r.0).unwrap());
-    //     }
-    //     (ciphertext_chunks, randomizers_r)
-    // };
 
     // Verify proof
     crypto::verify_chunking(
@@ -671,42 +652,56 @@ pub fn verify_zk_proofs_el_gamal(
     })?;
 
     // More conversions
-    // let miracl_public_coefficients =
-    //     public_coefficients_to_miracl(public_coefficients).map_err(|_| {
-    //         CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
-    //             message: "Could not parse public coefficients".to_string(),
-    //         })
-    //     })?;
-    // let combined_r = util::ecp_from_big_endian_chunks(&randomizers_r);
-    // let combined_ciphertexts: Vec<miracl::ECP> = ciphertext_chunks
-    //     .iter()
-    //     .map(util::ecp_from_big_endian_chunks)
-    //     .collect();
-    Ok(())
-    // let sharing_proof = sharing_proof_into_miracl(sharing_proof).map_err(|_| {
-    //     CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
-    //         message: "Could not parse proof of correct sharing".to_string(),
-    //     })
-    // })?;
 
-    // crypto::verify_sharing(
-    //     &crypto::SharingInstance {
-    //         g1_gen: miracl::ECP::generator(),
-    //         g2_gen: miracl::ECP2::generator(),
-    //         public_keys,
-    //         public_coefficients: miracl_public_coefficients,
-    //         combined_randomizer: combined_r,
-    //         combined_ciphertexts,
-    //     },
-    //     &sharing_proof,
-    // )
-    // .map_err(|e| {
-    //     println!("Error was: {:?}", e);
-    //     let error = InvalidArgumentError {
-    //         message: "Invalid sharing proof".to_string(),
-    //     };
-    //     CspDkgVerifyDealingError::InvalidDealingError(error)
-    // })
+    use crate::types::PublicKey;
+
+    let pub_coeffs: Vec<PublicKey> = public_coefficients
+        .coefficients
+        .iter()
+        .flatten()
+        .map(|pk| PublicKey(pk.0))
+        .collect();
+    use crate::types::PublicCoefficients;
+    let pub_coeffs = PublicCoefficients {
+        coefficients: pub_coeffs,
+    };
+
+    let pub_coeffs = PublicCoefficientsBytes::from(&pub_coeffs);
+
+    let miracl_public_coefficients = public_coefficients_to_miracl(&pub_coeffs).map_err(|_| {
+        CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
+            message: "Could not parse public coefficients".to_string(),
+        })
+    })?;
+    let combined_r = util::ecp_from_big_endian_chunks(&ciphertext.rr);
+    let combined_ciphertexts: Vec<miracl::ECP> = ciphertext
+        .cc
+        .iter()
+        .map(util::ecp_from_big_endian_chunks)
+        .collect();
+    let sharing_proof = sharing_proof_into_miracl(sharing_proof).map_err(|_| {
+        CspDkgVerifyDealingError::MalformedDealingError(InvalidArgumentError {
+            message: "Could not parse proof of correct sharing".to_string(),
+        })
+    })?;
+
+    crypto::verify_sharing(
+        &crypto::SharingInstance {
+            g1_gen: miracl::ECP::generator(),
+            g2_gen: miracl::ECP2::generator(),
+            public_keys,
+            public_coefficients: miracl_public_coefficients,
+            combined_randomizer: combined_r,
+            combined_ciphertexts,
+        },
+        &sharing_proof,
+    )
+    .map_err(|e| {
+        let error = InvalidArgumentError {
+            message: "Invalid sharing proof".to_string(),
+        };
+        CspDkgVerifyDealingError::InvalidDealingError(error)
+    })
 }
 
 mod util {

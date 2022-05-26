@@ -218,6 +218,8 @@ pub fn verify_sharing(
     let mut kbig: BIG = big_zero();
     let one: BIG = big_one();
     let mut lhs: ECP2 = ecp2_inf();
+
+    /* ****************************************************************** */
     instance.public_coefficients.iter().for_each(|aa_k| {
         let mut acc = big_zero();
         let mut xpow = x;
@@ -231,6 +233,8 @@ pub fn verify_sharing(
         lhs.add(&aa_k.mul(&acc));
         kbig = field_add(&kbig, &one);
     });
+    /* ******************************************************************* */
+
     lhs = lhs.mul(&x_challenge);
     lhs.add(&nizk.aa);
     let rhs = instance.g2_gen.mul(&nizk.z_alpha);

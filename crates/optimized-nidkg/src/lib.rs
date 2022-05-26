@@ -14,7 +14,7 @@ use ic_crypto_internal_types::{
     encrypt::forward_secure::groth20_bls12_381::{FsEncryptionCiphertext, FsEncryptionPublicKey},
     sign::threshold_sig::{
         ni_dkg::{
-            ni_dkg_groth20_bls12_381::{Dealing, Transcript, ZKProofDec},
+            ni_dkg_groth20_bls12_381::{Dealing, Transcript, ZKProofDec, ZKProofShare},
             Epoch,
         },
         public_key::bls12_381::PublicKeyBytes,
@@ -235,7 +235,7 @@ async fn run_single_dealer(
     println!("Dealing sending dealings to: {:?}", dealers);
 
     node.broadcast(
-        bincode::serialize(&(dealing.0.serialize(), dealing.1, dealing.2))
+        bincode::serialize(&(dealing.0.serialize(), dealing.1, dealing.2, dealing.3))
             .unwrap()
             .as_slice(),
         dealers,
@@ -248,12 +248,13 @@ async fn run_single_dealer(
         match id {
             Id::Bivariate(i, j) => {
                 if !dealings.contains_key(&((j) as u32)) {
-                    let dealing: (Vec<u8>, FsEncryptionCiphertext, ZKProofDec) =
+                    let dealing: (Vec<u8>, FsEncryptionCiphertext, ZKProofDec, ZKProofShare) =
                         bincode::deserialize(&msg).unwrap();
                     let dealing = (
                         PublicCoefficients::deserialize(dealing.0.clone(), t_prime),
                         dealing.1,
                         dealing.2,
+                        dealing.3,
                     );
                     verify_dealing_el_gamal(j as u32, threshold, epoch, &receiver_keys, &dealing)
                         .unwrap();
