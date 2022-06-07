@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 
+// structure to allow for iding nodes and ordering them
 #[derive(Serialize, Deserialize, Hash, Clone, Copy, Debug)]
 pub enum Id {
     Univariate(usize),

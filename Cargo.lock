@@ -2271,6 +2271,7 @@ dependencies = [
  "clap",
  "nidkg",
  "optimized-nidkg",
+ "optimized-univar",
  "tokio",
  "types",
  "univariate-dkg",
@@ -2614,6 +2615,24 @@ dependencies = [
 
 [[package]]
 name = "optimized-nidkg"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "ic-crypto-internal-bls12381-serde-miracl",
+ "ic-crypto-internal-threshold-sig-bls12381 0.8.0",
+ "ic-crypto-internal-types",
+ "ic-types 0.8.0",
+ "miracl_core_bls12381",
+ "networking",
+ "rand 0.7.3",
+ "rand_chacha 0.2.2",
+ "rand_core 0.5.1",
+ "tokio-stream",
+ "types",
+]
+
+[[package]]
+name = "optimized-univar"
 version = "0.1.0"
 dependencies = [
  "bincode",

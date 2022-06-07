@@ -8,7 +8,6 @@ use crate::api::ni_dkg_errors::{
     dealing::InvalidDealingError, CspDkgCreateReshareDealingError, CspDkgVerifyDealingError,
     InvalidArgumentError, MalformedSecretKeyError, MisnumberedReceiverError, SizeError,
 };
-use crate::crypto::{bivariate_keygen, x_for_index};
 use crate::{
     api::individual_public_key,
     crypto::{keygen, keygen_with_secret},
@@ -201,7 +200,6 @@ pub fn create_dealing_el_gamal(
             }
         }
 
-        // TODO: May want to convert PublicCoefficients to bivar before passing to encrypt_and_prove
         encrypt_and_prove_el_gamal(
             encryption_seed,
             &key_message_pairs,

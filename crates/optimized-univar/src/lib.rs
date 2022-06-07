@@ -1,10 +1,8 @@
 use ic_crypto_internal_threshold_sig_bls12381::{
     api::{individual_public_key, sign_message, verify_individual_signature},
     ni_dkg::groth20_bls12_381::{
-        compute_threshold_signing_key, create_dealing, create_forward_secure_key_pair,
-        create_transcript, trusted_secret_key_into_miracl,
-        types::{FsEncryptionKeySetWithPop, FsEncryptionSecretKey},
-        verify_dealing,
+        compute_threshold_signing_key_univar, create_dealing,
+        create_forward_secure_key_pair_el_gamal, create_transcript, verify_dealing,
     },
 };
 use ic_crypto_internal_types::{
@@ -18,26 +16,28 @@ use ic_types::{
     crypto::threshold_sig::ni_dkg::{NiDkgId, NiDkgTag, NiDkgTargetId, NiDkgTargetSubnet},
     Height, NumberOfNodes, PrincipalId, Randomness, SubnetId,
 };
+use miracl_core::bls12381::big::BIG;
 use networking::Node;
 use rand::Rng;
+use std::fs::File;
 use std::{
     collections::BTreeMap,
     io::{BufRead, BufReader},
 };
-use std::{fs::File, time::Instant};
 use tokio_stream::StreamExt;
 use types::Id;
 
-// generate key pairs for forward secure encryption
+// generate key pairs for Forward Secure Encryption
 pub fn generate_keypairs(n: usize) {
     const KEY_GEN_ASSOCIATED_DATA: &[u8] = &[2u8, 8u8, 1u8, 2u8];
 
     let mut keypairs = Vec::new();
-    for i in 0..n {
-        keypairs.push(create_forward_secure_key_pair(
+    for _ in 0..n {
+        let (pk, sk) = create_forward_secure_key_pair_el_gamal(
             Randomness::from(rand::thread_rng().gen::<[u8; 32]>()),
             KEY_GEN_ASSOCIATED_DATA,
-        ));
+        );
+        keypairs.push((pk, sk.tostring()));
     }
 
     std::fs::write("keypairs", bincode::serialize(&keypairs).unwrap()).unwrap();
@@ -62,13 +62,13 @@ pub async fn run_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool
         addresses
     };
 
-    let keypairs: Vec<FsEncryptionKeySetWithPop> =
+    let keypairs: Vec<(FsEncryptionPublicKey, String)> =
         bincode::deserialize(&std::fs::read("keypairs").expect("unable to read keypairs"))
             .expect("unable to deserialize file");
 
     let mut receiver_keys = BTreeMap::new();
     for (i, keypair) in keypairs.iter().enumerate() {
-        receiver_keys.insert(i as u32, keypair.public_key);
+        receiver_keys.insert(i as u32, keypair.0);
     }
 
     if is_dealer {
@@ -80,7 +80,7 @@ pub async fn run_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool
             n,
             d,
             t,
-            keypairs[my_id].secret_key.clone(),
+            BIG::fromstring(keypairs[my_id].1.clone()),
             addresses,
         )
         .await;
@@ -112,7 +112,7 @@ async fn run_single_dealer(
 
     let epoch = Epoch::from(1);
 
-    // ids of all nodes
+    // ids we will send a message to
     let ids = addresses
         .iter()
         .filter_map(|(id, _)| {
@@ -124,7 +124,7 @@ async fn run_single_dealer(
         })
         .collect::<Vec<Id>>();
 
-    // ids of other dealers
+    // dealer addresses
     let dealers = addresses
         .iter()
         .filter_map(|(id, _)| {
@@ -142,11 +142,14 @@ async fn run_single_dealer(
 
     let mut dealings = BTreeMap::new();
 
+    // my_id + n is the dealer. They are indexed from n..n+d
     let mut node = Node::new(addresses, Id::Univariate(my_id + n)).await;
 
     let total = std::time::Instant::now();
+
     let mut t = std::time::Instant::now();
-    // generate dealing and broadcast it
+
+    // generate a dealing and broadcast it
     let dealing = create_dealing(
         keygen_seed,
         encryption_seed,
@@ -159,17 +162,12 @@ async fn run_single_dealer(
     .unwrap();
     println!("Time to create dealing: {:?}", t.elapsed());
 
+    node.broadcast(bincode::serialize(&dealing).unwrap().as_slice(), dealers)
+        .await;
+
     dealings.insert(my_id as u32, dealing);
 
-    node.broadcast(
-        bincode::serialize(dealings.get(&(my_id as u32)).unwrap())
-            .unwrap()
-            .as_slice(),
-        dealers,
-    )
-    .await;
-
-    // wait for all dealings
+    // wait for dealings from other nodes
     while dealings.len() < d {
         let (id, msg) = node.recv.next().await.expect("failed to read message");
         match id {
@@ -177,7 +175,7 @@ async fn run_single_dealer(
                 if !dealings.contains_key(&((id - n) as u32)) {
                     let dealing: Dealing = bincode::deserialize(&msg).unwrap();
                     t = std::time::Instant::now();
-                    // verify the dealings
+                    // verify dealing
                     verify_dealing(
                         nidkg_id,
                         (id - n) as u32,
@@ -196,7 +194,7 @@ async fn run_single_dealer(
     }
 
     t = std::time::Instant::now();
-    // combine the dealings and send them
+    // combine the dealings into a transcript and broadcast it
     let transcript = create_transcript(threshold, NumberOfNodes::new(n as u32), &dealings).unwrap();
     println!("Time to create transcript: {:?}", t.elapsed());
 
@@ -216,28 +214,26 @@ async fn run_single_node(
     _n: usize,
     _d: usize,
     _t: usize,
-    sk: FsEncryptionSecretKey,
+    sk: BIG,
     addresses: BTreeMap<Id, String>,
 ) {
+    // let total = std::time::Instant::now();
     let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
+
     // wait for transcript
     let (_, msg) = node.recv.next().await.expect("failed to read message");
     let transcript: Transcript = bincode::deserialize(&msg).unwrap();
 
+    // recover the signing key
     let t = std::time::Instant::now();
-    // get signing key
-    let signing_key = compute_threshold_signing_key(
-        &transcript,
-        my_id as u32,
-        &trusted_secret_key_into_miracl(&sk),
-        Epoch::from(1),
-    )
-    .unwrap();
+    let signing_key =
+        compute_threshold_signing_key_univar(transcript.receiver_data, my_id as u32, &sk).unwrap();
     println!("Time to compute signing key: {:?}", t.elapsed());
 
-    // verify the key is correct
+    // sign and verify signature
     let msg: [u8; 32] = [0; 32];
     let my_sig = sign_message(&msg, &signing_key).unwrap();
+
     verify_individual_signature(
         &msg,
         my_sig,

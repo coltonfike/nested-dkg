@@ -5,13 +5,11 @@ use super::dealing::{
     verify_threshold,
 };
 use super::encryption::conversions::ciphertext_into_miracl;
-use super::encryption::{decrypt, decrypt_el_gamal};
-use super::types::FsEncryptionSecretKey;
+use super::encryption::{decrypt, decrypt_el_gamal, decrypt_univar};
 use crate::api::ni_dkg_errors::{self, DecryptError};
 use crate::crypto::x_for_index;
 use crate::types as threshold_types;
 use ic_crypto_internal_bls12381_common::fr_from_bytes;
-use ic_crypto_internal_bls12381_serde_miracl::G1Bytes;
 use ic_crypto_internal_fs_ni_dkg::forward_secure::SecretKey as ForwardSecureSecretKey;
 use ic_crypto_internal_types::encrypt::forward_secure::groth20_bls12_381::FsEncryptionCiphertext;
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381 as g20;
@@ -380,13 +378,7 @@ pub fn compute_threshold_signing_key_el_gamal(
             .map(|(dealer_index, encrypted_shares)| {
                 let ciphertext = ciphertext_into_miracl(encrypted_shares).unwrap();
 
-                let t = std::time::Instant::now();
                 let fs_plaintext = decrypt_el_gamal(&ciphertext, fs_secret_key, receiver_index);
-                println!(
-                    "time to decrypt for dealer {}: {:?}",
-                    dealer_index,
-                    t.elapsed()
-                );
                 let secret_key = FrBytes::from(&fs_plaintext);
                 let secret_key = fr_from_bytes(&secret_key.0);
 
@@ -413,6 +405,67 @@ pub fn compute_threshold_signing_key_el_gamal(
         let mut combined_shares = threshold_types::SecretKey::zero();
         for share in shares_from_each_dealer.values() {
             combined_shares.add_assign(share);
+        }
+        threshold_types::SecretKeyBytes::from(combined_shares)
+    };
+    Ok(combined_shares)
+}
+
+pub fn compute_threshold_signing_key_univar(
+    transcript: BTreeMap<NodeIndex, FsEncryptionCiphertext>,
+    receiver_index: NodeIndex,
+    fs_secret_key: &BIG,
+) -> Result<threshold_types::SecretKeyBytes, ni_dkg_errors::CspDkgLoadPrivateKeyError> {
+    // Get my shares
+    let shares_from_each_dealer: Result<BTreeMap<NodeIndex, threshold_types::SecretKey>, _> =
+        transcript
+            .iter()
+            .map(|(dealer_index, encrypted_shares)| {
+                let ciphertext = ciphertext_into_miracl(encrypted_shares).unwrap();
+
+                let fs_plaintext = decrypt_univar(&ciphertext, fs_secret_key, receiver_index);
+                let secret_key = FrBytes::from(&fs_plaintext);
+                let secret_key = fr_from_bytes(&secret_key.0);
+
+                if secret_key.is_err() {
+                    let message = format!(
+                        "Dealing #{}: has invalid share for receiver #{}.",
+                        dealer_index, receiver_index
+                    );
+                    let error = InvalidArgumentError { message };
+                    return Err(
+                        ni_dkg_errors::CspDkgLoadPrivateKeyError::InvalidTranscriptError(error),
+                    );
+                };
+
+                let secret_key = secret_key.expect("Unwrap of None");
+                Ok((*dealer_index, secret_key))
+            })
+            .collect();
+    let shares_from_each_dealer = shares_from_each_dealer?;
+
+    // Interpolate
+    let combined_shares = {
+        let lagrange_coefficients = {
+            let reshare_x: Vec<threshold_types::SecretKey> = shares_from_each_dealer
+                .keys()
+                .copied()
+                .map(x_for_index)
+                .collect();
+
+            threshold_types::PublicCoefficients::lagrange_coefficients_at_zero(&reshare_x)
+                .expect("Cannot fail because all x are distinct.")
+        };
+
+        let mut combined_shares = threshold_types::SecretKey::zero();
+
+        for ((_dealer_index, mut share), factor) in shares_from_each_dealer
+            .into_iter()
+            .zip(lagrange_coefficients)
+        {
+            // Aggregate the shares:
+            share.mul_assign(&factor);
+            combined_shares.add_assign(&share);
         }
         threshold_types::SecretKeyBytes::from(combined_shares)
     };

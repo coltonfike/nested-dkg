@@ -4,6 +4,7 @@ members = [
     "crates/networking",
     "crates/univariate-dkg",
     "crates/bivariate-dkg",
+    "crates/optimized-univar",
     "crates/types",
     "crates/nidkg",
     "crates/dfinity/bls12_381",

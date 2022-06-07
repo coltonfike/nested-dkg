@@ -1,20 +1,16 @@
-use ic_crypto_internal_bls12381_serde_miracl::G1Bytes;
 use ic_crypto_internal_threshold_sig_bls12381::{
-    api::{individual_public_key, sign_message, verify_individual_signature},
+    api::{sign_message, verify_individual_signature},
     ni_dkg::groth20_bls12_381::{
-        compute_threshold_signing_key, compute_threshold_signing_key_el_gamal,
-        create_dealing_el_gamal, create_forward_secure_key_pair_el_gamal, create_transcript,
-        create_transcript_el_gamal, trusted_secret_key_into_miracl,
-        types::{FsEncryptionKeySetWithPop, FsEncryptionSecretKey},
-        verify_dealing, verify_dealing_el_gamal,
+        compute_threshold_signing_key_el_gamal, create_dealing_el_gamal,
+        create_forward_secure_key_pair_el_gamal, create_transcript_el_gamal,
+        verify_dealing_el_gamal,
     },
-    types::public_coefficients::conversions::InternalPublicCoefficients,
 };
 use ic_crypto_internal_types::{
     encrypt::forward_secure::groth20_bls12_381::{FsEncryptionCiphertext, FsEncryptionPublicKey},
     sign::threshold_sig::{
         ni_dkg::{
-            ni_dkg_groth20_bls12_381::{Dealing, Transcript, ZKProofDec, ZKProofShare},
+            ni_dkg_groth20_bls12_381::{ZKProofDec, ZKProofShare},
             Epoch,
         },
         public_key::bls12_381::PublicKeyBytes,
@@ -23,10 +19,7 @@ use ic_crypto_internal_types::{
 use ic_crypto_internal_types::{
     sign::threshold_sig::public_coefficients::bls12_381::PublicCoefficientsBytes, NodeIndex,
 };
-use ic_types::{
-    crypto::threshold_sig::ni_dkg::{NiDkgId, NiDkgTag, NiDkgTargetId, NiDkgTargetSubnet},
-    Height, NumberOfNodes, PrincipalId, Randomness, SubnetId,
-};
+use ic_types::{NumberOfNodes, Randomness};
 use miracl_core::bls12381::big::BIG;
 use networking::Node;
 use rand::Rng;
@@ -39,6 +32,7 @@ use tokio_stream::StreamExt;
 use types::bivariate::PublicCoefficients;
 use types::Id;
 
+// generate key pairs for forward secure encryption
 pub fn generate_keypairs(n: usize, m: usize) {
     const KEY_GEN_ASSOCIATED_DATA: &[u8] = &[2u8, 8u8, 1u8, 2u8];
 
@@ -57,6 +51,7 @@ pub fn generate_keypairs(n: usize, m: usize) {
     std::fs::write("keypairs", bincode::serialize(&keypairs).unwrap()).unwrap();
 }
 
+// setup to run dkg
 pub async fn run_dkg(
     my_id_i: usize,
     my_id_j: usize,
@@ -73,6 +68,7 @@ pub async fn run_dkg(
         if aws {
             let mut reader = BufReader::new(File::open("addresses").unwrap());
 
+            // read addresses from file and store in map
             for i in 0..n {
                 for j in 0..m {
                     let mut addr = String::new();
@@ -112,6 +108,7 @@ pub async fn run_dkg(
         bincode::deserialize(&std::fs::read("keypairs").expect("unable to read keypairs"))
             .expect("unable to deserialize file");
 
+    // add keypairs to map
     let mut receiver_keys = BTreeMap::new();
     for i in 0..n {
         for j in 0..m {
@@ -150,6 +147,7 @@ pub async fn run_dkg(
     }
 }
 
+// run a dealer
 async fn run_single_dealer(
     my_id_i: usize,
     my_id_j: usize,
@@ -161,22 +159,9 @@ async fn run_single_dealer(
     receiver_keys: BTreeMap<(u32, u32), FsEncryptionPublicKey>,
     addresses: BTreeMap<Id, String>,
 ) {
-    //! this is required to generate dealing, but it is not used for any computation, so it's set to default values define by dfinity
-    let nidkg_id: NiDkgId = NiDkgId {
-        start_block_height: Height::new(3),
-        dealer_subnet: SubnetId::new(PrincipalId::new(
-            10,
-            [
-                1, 0, 0, 0, 0, 0, 0, 0, 0xfc, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0,
-            ],
-        )),
-        dkg_tag: NiDkgTag::HighThreshold,
-        target_subnet: NiDkgTargetSubnet::Remote(NiDkgTargetId::new([42; 32])),
-    };
-
     let epoch = Epoch::from(1);
 
+    // ids to send dealing to
     let ids = addresses
         .iter()
         .filter_map(|(id, _)| match id {
@@ -191,6 +176,7 @@ async fn run_single_dealer(
         })
         .collect::<Vec<Id>>();
 
+    // other dealer ids
     let dealers = addresses
         .iter()
         .filter_map(|(id, _)| match id {
@@ -218,6 +204,7 @@ async fn run_single_dealer(
 
     println!("Dealer creating dealings");
 
+    // create dealing and send it
     let dealing = create_dealing_el_gamal(
         keygen_seed,
         encryption_seed,
@@ -268,6 +255,7 @@ async fn run_single_dealer(
                         dealing.3,
                         dealing.4,
                     );
+                    // verify the dealing
                     verify_dealing_el_gamal(j as u32, threshold, epoch, &receiver_keys, &dealing)
                         .unwrap();
                     dealings.insert((j) as u32, (dealing.0, dealing.1));
@@ -278,6 +266,7 @@ async fn run_single_dealer(
     }
 
     println!("Making transcript");
+    // make and send the transcript
     let transcript = create_transcript_el_gamal(
         threshold,
         (NumberOfNodes::new(n as u32), NumberOfNodes::new(m as u32)),
@@ -299,14 +288,15 @@ async fn run_single_node(
     my_id_j: usize,
     n: usize,
     m: usize,
-    d: usize,
-    t: usize,
+    _d: usize,
+    _t: usize,
     t_prime: usize,
     sk: BIG,
     addresses: BTreeMap<Id, String>,
 ) {
     let mut node = Node::new(addresses, Id::Bivariate(my_id_i, my_id_j)).await;
     println!("waiting for transcript");
+    // wait for transcript
     let (_, msg) = node.recv.next().await.expect("failed to read message");
     println!("got transcript");
     let transcript: (Vec<u8>, BTreeMap<NodeIndex, FsEncryptionCiphertext>) =
@@ -319,6 +309,7 @@ async fn run_single_node(
 
     println!("Attempting to get signing key");
 
+    // get signing key
     let signing_key = compute_threshold_signing_key_el_gamal(
         transcript.1,
         (my_id_i as u32, my_id_j as u32),
@@ -328,6 +319,7 @@ async fn run_single_node(
     .unwrap();
     println!("got my signing key");
 
+    // verify the key is correct
     let msg: [u8; 32] = [0; 32];
     let my_sig = sign_message(&msg, &signing_key).unwrap();
     verify_individual_signature(
@@ -342,6 +334,7 @@ async fn run_single_node(
     .unwrap();
     println!("Signed message");
 
+    // shutdown and record results
     std::thread::sleep(std::time::Duration::from_secs(20));
     node.shutdown();
     println!("receiver done");

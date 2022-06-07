@@ -91,33 +91,6 @@ pub fn keygen(
     Ok(keygen_from_polynomial(polynomial, share_indices))
 }
 
-// TODO: Review this to improve performance!
-pub fn bivariate_keygen(
-    seed: Randomness,
-    threshold: (NumberOfNodes, NumberOfNodes),
-    share_indices: &Vec<Vec<bool>>,
-) -> Result<(PublicCoefficients, Vec<Option<SecretKey>>), InvalidArgumentError> {
-    if (threshold.0.get() as usize) > share_indices.len() {
-        return Err(InvalidArgumentError {
-            message: format!(
-                "Not enough groups to satisfy threshold (threshold={} > groups={})",
-                threshold.0.get(),
-                share_indices.len()
-            ),
-        });
-    }
-    for arr in share_indices.iter().skip(1) {
-        verify_keygen_args(threshold.1, arr.as_slice())?;
-    }
-
-    let mut rng = ChaChaRng::from_seed(seed.get());
-    let polynomial = BivariatePolynomial::random(
-        (threshold.0.get() as usize, threshold.1.get() as usize),
-        &mut rng,
-    );
-    Ok(keygen_from_bivariate_polynomial(polynomial, share_indices))
-}
-
 /// Generates keys for a (t,n)-threshold signature scheme, using an existing
 /// secret key.
 ///
@@ -227,30 +200,6 @@ fn keygen_from_polynomial(
             }
         })
         .collect();
-    (public_coefficients, shares)
-}
-
-/// Generates keys from a bivariate polynomial
-// TODO: Improve this with iterators!
-fn keygen_from_bivariate_polynomial(
-    polynomial: BivariatePolynomial,
-    share_indices: &Vec<Vec<bool>>,
-) -> (PublicCoefficients, Vec<Option<SecretKey>>) {
-    let public_coefficients = PublicCoefficients::from(&polynomial);
-
-    let mut shares = Vec::new();
-    for (i, arr) in share_indices.iter().enumerate() {
-        for (j, needs_share) in arr.iter().enumerate() {
-            if *needs_share {
-                let x = x_for_index(i.try_into().unwrap());
-                let y = x_for_index(j.try_into().unwrap());
-
-                shares.push(Some(polynomial.evaluate_at(&x, &y)));
-            } else {
-                shares.push(None);
-            }
-        }
-    }
     (public_coefficients, shares)
 }
 

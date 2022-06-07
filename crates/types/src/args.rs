@@ -1,5 +1,7 @@
 use clap::{Args, Parser, Subcommand};
 
+// Clap structs for the different subcommands
+
 #[derive(Parser, Clone, Debug, Eq, PartialEq)]
 pub struct Cli {
     #[clap(subcommand)]

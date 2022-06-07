@@ -9,6 +9,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaChaRng;
 use types::univariate::Dealing;
 
+// generates shares for a scheme with n nodes and t threshold
 pub fn generate_shares(n: u32, t: usize) -> Dealing {
     let seed = rand::random::<[u8; 32]>();
     let mut rng = ChaChaRng::from_seed(seed);
@@ -21,6 +22,7 @@ pub fn generate_shares(n: u32, t: usize) -> Dealing {
     Dealing(public_coefficients, shares)
 }
 
+// sum all shares for node `index`
 pub fn combine_dealings(index: usize, dealings: &Vec<Dealing>) -> (PublicCoefficients, Scalar) {
     dealings.iter().fold(
         (PublicCoefficients::zero(), Scalar::zero()),
@@ -30,11 +32,13 @@ pub fn combine_dealings(index: usize, dealings: &Vec<Dealing>) -> (PublicCoeffic
     )
 }
 
+// returns the public key for node `index`
 pub fn get_public_key(index: usize, coefficients: &PublicCoefficients) -> PublicKey {
+    // x_for_index(index) is a scalar equal to index + 1 for the evaluation
     PublicKey(coefficients.evaluate_at(&x_for_index(index as u32)))
 }
 
-// TODO: Move this to a sign crate
+// TODO: Move this to a sign crate, this function is duplicated in bivar dkg as well
 pub fn combine_signatures(
     signatures: &BTreeMap<usize, G1Projective>,
     t: usize,

@@ -18,7 +18,8 @@ pub use encryption::{
 };
 pub use transcript::{
     compute_threshold_signing_key, compute_threshold_signing_key_el_gamal,
-    create_resharing_transcript, create_transcript, create_transcript_el_gamal,
+    compute_threshold_signing_key_univar, create_resharing_transcript, create_transcript,
+    create_transcript_el_gamal,
 };
 
 use ic_types::crypto::AlgorithmId;

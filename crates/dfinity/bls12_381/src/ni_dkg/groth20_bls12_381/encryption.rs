@@ -402,6 +402,28 @@ pub fn decrypt_el_gamal(
     plaintext_to_bytes(&decrypt_maybe)
 }
 
+pub fn decrypt_univar(
+    ciphertext: &Crsz,
+    secret_key: &BIG,
+    node_index: NodeIndex,
+) -> FsEncryptionPlaintext {
+    // let index = usize::try_from(node_index).map_err(|_| {
+    //     DecryptError::SizeError(SizeError {
+    //         message: format!("Node index is too large for this machine: {}", node_index),
+    //     })
+    // })?;
+    // if index >= ciphertext.1.len() {
+    //     return Err(DecryptError::InvalidReceiverIndex {
+    //         num_receivers: NumberOfNodes::from(ciphertext.1.len() as NodeIndex),
+    //         node_index,
+    //     });
+    // }
+    use crypto::el_gamal::dec_chunks;
+    let decrypt_maybe = dec_chunks(secret_key, node_index as usize, ciphertext);
+
+    plaintext_to_bytes(&decrypt_maybe)
+}
+
 fn prove_chunking(
     receiver_fs_public_keys: &[miracl::ECP],
     ciphertext: &crypto::Crsz,

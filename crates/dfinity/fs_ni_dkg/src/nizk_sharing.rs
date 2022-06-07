@@ -208,7 +208,6 @@ pub fn verify_sharing(
     lhs.add(&first_move.blinder_g1);
     let rhs = instance.g1_gen.mul(&nizk.z_r);
     if !lhs.equals(&rhs) {
-        println!("Failed at A");
         return Err(ZkProofSharingError::InvalidProof);
     }
 
@@ -240,7 +239,6 @@ pub fn verify_sharing(
     let rhs = instance.g2_gen.mul(&nizk.z_alpha);
 
     if !lhs.equals(&rhs) {
-        println!("Failed at B");
         return Err(ZkProofSharingError::InvalidProof);
     }
 
@@ -269,7 +267,6 @@ pub fn verify_sharing(
         });
     rhs = rhs.mul2(&nizk.z_r, &instance.g1_gen, &nizk.z_alpha);
     if !lhs.equals(&rhs) {
-        println!("Failed at C");
         return Err(ZkProofSharingError::InvalidProof);
     }
     Ok(())

@@ -8,9 +8,11 @@ pub enum Message {
     Shares(Vec<Vec<u8>>, Vec<Vec<u8>>),
 }
 
+// A dealing for univariate dkg
 pub struct Dealing(pub PublicCoefficients, pub Vec<Scalar>);
 
 impl Dealing {
+    // convert the dealing to bytes so it can be encoded with bincode
     pub fn serialize(&self) -> (Vec<Vec<u8>>, Vec<Vec<u8>>) {
         (
             self.0
@@ -34,6 +36,7 @@ impl Dealing {
         )
     }
 
+    // deserialize the bytes into a dealing
     pub fn deserialize(coefficients: Vec<Vec<u8>>, scalars: Vec<Vec<u8>>) -> Self {
         Dealing(
             PublicCoefficients {

@@ -30,7 +30,7 @@ pub fn write_dealing_to_file(nodes: u32, threshold: usize) {
     .unwrap();
 }
 
-// Runs a local test on threshold signatures
+// Runs a node for threshold signatures
 pub async fn run_threshold_signature(my_id: usize, n: u32, t: usize, aws: bool) {
     let addresses = {
         let mut addresses = BTreeMap::new();
@@ -59,8 +59,10 @@ async fn run_single_node_threshold_signature(
     t: usize,
     addresses: BTreeMap<Id, String>,
 ) {
+    // static msg to sign
     let msg: [u8; 32] = [0; 32];
 
+    // node ids that we will send messages to
     let ids = addresses
         .iter()
         .filter_map(|(id, _)| {
@@ -72,15 +74,20 @@ async fn run_single_node_threshold_signature(
         })
         .collect::<Vec<Id>>();
 
+    // read our shares from a file
     let dealing: (Vec<Vec<u8>>, Vec<Vec<u8>>) = bincode::deserialize(
         &std::fs::read("univariate_shares").expect("unable to read share file"),
     )
     .expect("unable to deserialize file");
     let dealing = Dealing::deserialize(dealing.0, dealing.1);
 
-    let pk = get_public_key(my_id, &dealing.0);
+    // get our public key
+    let _pk = get_public_key(my_id, &dealing.0);
 
+    // get our secret key
     let sk = dealing.1[my_id];
+
+    // get the group public key
     let whole_pk = dealing.0.evaluate_at(&Scalar::zero());
 
     let mut partial_sigs = BTreeMap::new();
@@ -88,22 +95,36 @@ async fn run_single_node_threshold_signature(
     let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
 
     let time = std::time::Instant::now();
+    let verify_time;
+    let sign_time;
 
+    // sign my message and broadcast it
+    let t1 = std::time::Instant::now();
     let my_sig = sign_message(&msg, &sk);
+    sign_time = t1.elapsed();
+    let t1 = std::time::Instant::now();
+    verify_individual_sig(&msg, my_sig, _pk).unwrap();
+    verify_time = t1.elapsed();
 
+    // we convert the sig to bytes for the sending with to_affine().to_uncompressed()
+    // the to_bytes uses the compressed version which is really slow
     node.broadcast(&my_sig.to_affine().to_uncompressed(), ids)
         .await;
 
     partial_sigs.insert(my_id, my_sig);
 
+    // wait for t signatures
     while partial_sigs.len() < t {
         let (id, share) = node.recv.next().await.expect("failed to read message");
+
+        // deserialize the signature
         let sig = G1Projective::from(
             G1Affine::from_uncompressed_unchecked(&share.try_into().unwrap()).unwrap(),
         );
 
         match id {
             Id::Univariate(i) => {
+                // verify the signature
                 verify_individual_sig(&msg, sig, get_public_key(i, &dealing.0)).unwrap();
                 partial_sigs.insert(i, sig);
             }
@@ -111,9 +132,15 @@ async fn run_single_node_threshold_signature(
         }
     }
 
+    // combine and verify the signatures
+    let t1 = std::time::Instant::now();
     let group_sig = combine_signatures(&partial_sigs, t as usize).unwrap();
+    let aggregate_time = t1.elapsed();
+    let t1 = std::time::Instant::now();
     verify_combined_sig(&msg, group_sig, PublicKey(whole_pk)).unwrap();
+    let verify_combined_time = t1.elapsed();
 
+    // shutdown and record results
     let total_time = time.elapsed();
     std::thread::sleep(std::time::Duration::from_secs(1));
     node.shutdown();
@@ -127,11 +154,17 @@ async fn run_single_node_threshold_signature(
         .open(filename)
         .unwrap();
 
-    file.write_all(format!("{:?}\n", total_time).as_bytes())
-        .unwrap();
+    file.write_all(
+        format!(
+            "{:?},{:?},{:?},{:?},{:?}\n",
+            total_time, sign_time, verify_time, aggregate_time, verify_combined_time
+        )
+        .as_bytes(),
+    )
+    .unwrap();
 }
 
-// runs a local dkg test
+// runs a dkg test
 pub async fn run_dkg(my_id: usize, n: u32, t: usize, aws: bool) {
     let addresses = {
         let mut addresses = BTreeMap::new();
@@ -155,6 +188,7 @@ pub async fn run_dkg(my_id: usize, n: u32, t: usize, aws: bool) {
 
 // runs a single node in a dkg
 async fn run_single_node(my_id: usize, n: u32, t: usize, addresses: BTreeMap<Id, String>) {
+    // ids we will send messages to
     let ids = addresses
         .iter()
         .filter_map(|(id, _)| {
@@ -167,7 +201,11 @@ async fn run_single_node(my_id: usize, n: u32, t: usize, addresses: BTreeMap<Id,
         .collect::<Vec<Id>>();
     let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
 
+    // generate a dealing and broadcast them
+    let time = std::time::Instant::now();
+    let t1 = std::time::Instant::now();
     let dealing = generate_shares(n, t);
+    let generate_shares_time = t1.elapsed();
     let (serialized_coefficients, serialized_shares) = dealing.serialize();
     let msg = Message::Shares(serialized_coefficients, serialized_shares);
 
@@ -176,11 +214,12 @@ async fn run_single_node(my_id: usize, n: u32, t: usize, addresses: BTreeMap<Id,
     node.broadcast(&bincode::serialize(&msg).unwrap(), ids)
         .await;
 
-    // n - 1 since we already know our shares
+    // wait for dealings from all other nodes n - 1 since we already know our shares
     for _ in 0..n - 1 {
         let (_, msg) = node.recv.next().await.expect("failed to read message");
         let msg: Message = bincode::deserialize(&msg).unwrap();
         match msg {
+            //TODO verify the dealing
             Message::Shares(serialized_coefficients, serialized_shares) => {
                 dealings.push(Dealing::deserialize(
                     serialized_coefficients,
@@ -190,11 +229,38 @@ async fn run_single_node(my_id: usize, n: u32, t: usize, addresses: BTreeMap<Id,
         }
     }
 
-    let (coefficients, sk) = combine_dealings(my_id, &dealings);
-    let pk = get_public_key(my_id, &coefficients);
+    // get our public/private key from the dealings
+    let t1 = std::time::Instant::now();
+    let (coefficients, _sk) = combine_dealings(my_id, &dealings);
+    let combined_dealings_time = t1.elapsed();
+    let _pk = get_public_key(my_id, &coefficients);
 
+    let msg: [u8; 32] = [0; 32];
+    let t1 = std::time::Instant::now();
+    let my_sig = sign_message(&msg, &_sk);
+    verify_individual_sig(&msg, my_sig, _pk).unwrap();
+    let sign_time = t1.elapsed();
+
+    // finish and record results
+    let total_time = time.elapsed();
     std::thread::sleep(std::time::Duration::from_secs(1));
     node.shutdown();
+    println!("total_time: {:?}", total_time);
 
-    println!("Node {} finished", my_id);
+    let filename = format!("results/univariate_dkg_{}_{}", n, t);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(filename)
+        .unwrap();
+
+    file.write_all(
+        format!(
+            "{:?},{:?},{:?},{:?}\n",
+            total_time, generate_shares_time, combined_dealings_time, sign_time,
+        )
+        .as_bytes(),
+    )
+    .unwrap();
 }
