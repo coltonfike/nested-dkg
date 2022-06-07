@@ -9,6 +9,8 @@ edition = "2021"
 univariate-dkg = { path = "../univariate-dkg" }
 bivariate-dkg = { path = "../bivariate-dkg" }
 nidkg = { path = "../nidkg" }
+optimized-nidkg = { path = "../optimized-nidkg" }
+optimized-univar = { path = "../optimized-univar" }
 types = { path = "../types" }
 clap = { version = "3.1.2", features = ["derive"] }
 tokio = { version = "1.17.0", features = ["full"] }

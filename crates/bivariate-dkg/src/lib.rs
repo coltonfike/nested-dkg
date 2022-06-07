@@ -1,4 +1,4 @@
 pub mod api;
-mod dkg;
+pub mod dkg;
 #[cfg(test)]
 mod tests;

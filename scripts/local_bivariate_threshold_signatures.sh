@@ -4,6 +4,9 @@ N=$1
 M=$2
 T=$3
 P=$4
+
+./target/release/main bivariate-share-file -n "$N" -m "$M" -t "$T" -p "$P"
+
 for ((i=0; i<$N; i++))
 do
     for ((j=0; j<$M; j++))

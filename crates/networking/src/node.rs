@@ -14,6 +14,9 @@ use types::Id;
 
 use tokio_stream::{wrappers::UnboundedReceiverStream, StreamMap};
 
+// In hindsight, this isn't a great way to do this.
+
+// struct to store readers/writers
 pub struct Node {
     writers: BTreeMap<Id, OwnedWriteHalf>,
     stop: Sender<String>,
@@ -21,6 +24,7 @@ pub struct Node {
 }
 
 impl Node {
+    // open a connection to all nodes in addresses
     pub async fn new(addresses: BTreeMap<Id, String>, my_id: Id) -> Node {
         let mut connect_to = BTreeMap::new();
         let mut to_connect = BTreeSet::new();
@@ -65,6 +69,7 @@ impl Node {
         }
     }
 
+    // send a message to all nodes in `to`
     pub async fn broadcast(&mut self, msg: &[u8], to: Vec<Id>) {
         let mut to_send = msg.len().to_be_bytes().to_vec();
         to_send.append(&mut msg.to_vec());
@@ -78,6 +83,7 @@ impl Node {
         }
     }
 
+    // shutdown the node
     pub fn shutdown(&self) {
         self.stop
             .send("stop".to_owned())
@@ -85,6 +91,7 @@ impl Node {
     }
 }
 
+// read messages and send them to the node's receiver
 async fn read_from_sock(
     mut reader: OwnedReadHalf,
     sender: UnboundedSender<Vec<u8>>,
@@ -109,6 +116,7 @@ async fn read_from_sock(
     }
 }
 
+// listen for connections
 async fn listen(my_addr: String, to_connect: BTreeSet<Id>) -> BTreeMap<Id, TcpStream> {
     let listener = TcpListener::bind(my_addr.clone())
         .await
@@ -138,6 +146,7 @@ async fn listen(my_addr: String, to_connect: BTreeSet<Id>) -> BTreeMap<Id, TcpSt
     streams
 }
 
+// connect to all nodes in `to`
 async fn connect(my_id: Id, connect_to: BTreeMap<Id, String>) -> BTreeMap<Id, TcpStream> {
     let mut id_buf = bincode::serialize(&my_id).expect("failed to serialize id");
     let mut to_send = id_buf.len().to_be_bytes().to_vec();
