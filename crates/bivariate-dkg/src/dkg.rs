@@ -4,7 +4,7 @@ use std::{
 };
 
 use bls12_381::{G1Projective, Scalar};
-use ic_crypto_internal_threshold_sig_bls12381::{crypto::x_for_index, types::PublicKey};
+use ic_crypto_internal_threshold_sig_bls12381::crypto::x_for_index;
 use rand::SeedableRng;
 use rand_chacha::ChaChaRng;
 use types::bivariate::{Dealing, Polynomial, PublicCoefficients};

@@ -6,7 +6,7 @@ use super::dealing::{
 };
 use super::encryption::conversions::ciphertext_into_miracl;
 use super::encryption::{decrypt, decrypt_el_gamal, decrypt_univar};
-use crate::api::ni_dkg_errors::{self, DecryptError};
+use crate::api::ni_dkg_errors;
 use crate::crypto::x_for_index;
 use crate::types as threshold_types;
 use ic_crypto_internal_bls12381_common::fr_from_bytes;
@@ -65,8 +65,8 @@ pub fn create_transcript(
 use types::bivariate::PublicCoefficients;
 
 pub fn create_transcript_el_gamal(
-    threshold: (NumberOfNodes, NumberOfNodes),
-    number_of_receivers: (NumberOfNodes, NumberOfNodes),
+    _threshold: (NumberOfNodes, NumberOfNodes),
+    _number_of_receivers: (NumberOfNodes, NumberOfNodes),
     dealings: &BTreeMap<NodeIndex, (PublicCoefficients, FsEncryptionCiphertext)>,
 ) -> Result<
     (
@@ -368,7 +368,7 @@ pub fn compute_threshold_signing_key(
 pub fn compute_threshold_signing_key_el_gamal(
     transcript: BTreeMap<NodeIndex, FsEncryptionCiphertext>,
     receiver_index: (NodeIndex, NodeIndex),
-    nodes: (usize, usize),
+    _nodes: (usize, usize),
     fs_secret_key: &BIG,
 ) -> Result<threshold_types::SecretKeyBytes, ni_dkg_errors::CspDkgLoadPrivateKeyError> {
     // Get my shares

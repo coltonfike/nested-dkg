@@ -1,8 +1,8 @@
 //! Threshold signatures with a simple dealing mechanism.
 
 use super::types::{
-    BivariatePolynomial, CombinedSignature, CombinedSignatureBytes, IndividualSignature,
-    IndividualSignatureBytes, Polynomial, PublicCoefficients, SecretKey, Signature,
+    CombinedSignature, CombinedSignatureBytes, IndividualSignature, IndividualSignatureBytes,
+    Polynomial, PublicCoefficients, SecretKey, Signature,
 };
 use crate::api::dkg_errors::InvalidArgumentError;
 use ic_crypto_internal_bls12381_common::hash_to_g1;
@@ -17,7 +17,7 @@ use ic_types::{
 use pairing::Engine;
 use rand_chacha::ChaChaRng;
 use rand_core::SeedableRng;
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
 use std::ops::AddAssign;
 
 /// Domain separator for Hash-to-G1 to be used for signature generation as

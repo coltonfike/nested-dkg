@@ -15,9 +15,8 @@ use conversions::{
     public_coefficients_to_miracl, public_key_from_miracl, secret_key_from_miracl,
     sharing_proof_from_miracl, sharing_proof_into_miracl, Tau,
 };
-use ic_crypto_internal_bls12381_serde_miracl::{miracl_g1_from_bytes, G1Bytes};
+use ic_crypto_internal_bls12381_serde_miracl::miracl_g1_from_bytes;
 use ic_crypto_internal_fs_ni_dkg::forward_secure::Crsz;
-use ic_crypto_internal_fs_ni_dkg::nizk_chunking::ProofChunking;
 use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::ni_dkg_groth20_bls12_381::{
     FsEncryptionCiphertext, FsEncryptionPlaintext, FsEncryptionPublicKey, NodeIndex,
 };
@@ -31,10 +30,8 @@ use ic_types::crypto::AlgorithmId;
 use ic_types::{NumberOfNodes, Randomness};
 use lazy_static::lazy_static;
 use miracl_core::bls12381::big::BIG;
-use miracl_core::bls12381::ecp::ECP;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
-use types::bivariate::{Polynomial, PublicCoefficients};
 
 pub(crate) mod conversions;
 
@@ -94,6 +91,7 @@ pub fn create_forward_secure_key_pair(
     }
 }
 
+// new keygen function for el gamal decryption
 pub fn create_forward_secure_key_pair_el_gamal(
     seed: Randomness,
     associated_data: &[u8],
@@ -101,8 +99,7 @@ pub fn create_forward_secure_key_pair_el_gamal(
     use crypto::el_gamal::kgen;
     let mut rng = crypto::RAND_ChaCha20::new(seed.get());
     let (lib_public_key_with_pop, secret_key) = kgen(associated_data, &mut rng);
-    let (public_key, pop) = public_key_from_miracl(&lib_public_key_with_pop);
-    // let secret_key = secret_key_from_miracl(&lib_secret_key);
+    let (public_key, _pop) = public_key_from_miracl(&lib_public_key_with_pop);
     (public_key, secret_key)
 }
 
@@ -308,8 +305,6 @@ pub fn encrypt_and_prove_el_gamal(
         &mut rng,
     );
 
-    let mut sharing_proofs = Vec::new();
-
     let mut pc = Vec::new();
     for i in 0..public_coefficients.len() {
         let miracl_public_coefficients = public_coefficients_to_miracl(&public_coefficients[i])
@@ -325,12 +320,13 @@ pub fn encrypt_and_prove_el_gamal(
         &plaintext_chunks,
         &toxic_waste,
         &mut rng,
+        key_message_pairs.len(),
     );
 
     Ok((
         ciphertext_from_miracl(&ciphertext),
         chunking_proof_from_miracl(&chunking_proof),
-        sharing_proofs,
+        sharing_proof,
     ))
 }
 
@@ -381,17 +377,6 @@ pub fn decrypt_el_gamal(
     secret_key: &BIG,
     node_index: (NodeIndex, NodeIndex),
 ) -> FsEncryptionPlaintext {
-    // let index = usize::try_from(node_index).map_err(|_| {
-    //     DecryptError::SizeError(SizeError {
-    //         message: format!("Node index is too large for this machine: {}", node_index),
-    //     })
-    // })?;
-    // if index >= ciphertext.1.len() {
-    //     return Err(DecryptError::InvalidReceiverIndex {
-    //         num_receivers: NumberOfNodes::from(ciphertext.1.len() as NodeIndex),
-    //         node_index,
-    //     });
-    // }
     use crypto::el_gamal::dec_chunks;
     let decrypt_maybe = dec_chunks(
         secret_key,
@@ -407,17 +392,6 @@ pub fn decrypt_univar(
     secret_key: &BIG,
     node_index: NodeIndex,
 ) -> FsEncryptionPlaintext {
-    // let index = usize::try_from(node_index).map_err(|_| {
-    //     DecryptError::SizeError(SizeError {
-    //         message: format!("Node index is too large for this machine: {}", node_index),
-    //     })
-    // })?;
-    // if index >= ciphertext.1.len() {
-    //     return Err(DecryptError::InvalidReceiverIndex {
-    //         num_receivers: NumberOfNodes::from(ciphertext.1.len() as NodeIndex),
-    //         node_index,
-    //     });
-    // }
     use crypto::el_gamal::dec_chunks;
     let decrypt_maybe = dec_chunks(secret_key, node_index as usize, ciphertext);
 
@@ -505,6 +479,7 @@ fn prove_sharing_el_gamal(
     plaintext_chunks: &[Vec<isize>],
     toxic_waste: &crypto::ToxicWaste,
     rng: &mut crypto::RAND_ChaCha20,
+    n: usize,
 ) -> Vec<ZKProofShare> {
     // Convert fs encryption data:
 
@@ -513,9 +488,10 @@ fn prove_sharing_el_gamal(
 
     let mut proofs = Vec::new();
     for i in 0..public_coefficients.len() {
-        let cc = ciphertext.cc[11 * i..11 * (i + 1)].to_vec();
-        let plaintext_chunk = plaintext_chunks[11 * i..11 * (i + 1)].to_vec();
-        let pub_keys = receiver_fs_public_keys[11 * i..11 * (i + 1)].to_vec();
+        // get all values for row i, since these array are flattened
+        let cc = ciphertext.cc[n * i..n * (i + 1)].to_vec();
+        let plaintext_chunk = plaintext_chunks[n * i..n * (i + 1)].to_vec();
+        let pub_keys = receiver_fs_public_keys[n * i..n * (i + 1)].to_vec();
 
         let combined_ciphertexts: Vec<miracl::ECP> =
             cc.iter().map(util::ecp_from_big_endian_chunks).collect();
@@ -667,7 +643,7 @@ pub fn verify_zk_proofs(
         },
         &sharing_proof,
     )
-    .map_err(|e| {
+    .map_err(|_| {
         let error = InvalidArgumentError {
             message: "Invalid sharing proof".to_string(),
         };
@@ -676,13 +652,13 @@ pub fn verify_zk_proofs(
 }
 
 pub fn verify_zk_proofs_el_gamal(
-    epoch: Epoch,
+    _epoch: Epoch,
     receiver_fs_public_keys: &BTreeMap<(NodeIndex, NodeIndex), FsEncryptionPublicKey>,
     public_coefficients: &Vec<PublicCoefficientsBytes>,
     ciphertexts: &FsEncryptionCiphertext,
     chunking_proof: &ZKProofDec,
     sharing_proof: &Vec<ZKProofShare>,
-    associated_data: &[u8],
+    _associated_data: &[u8],
 ) -> Result<(), CspDkgVerifyDealingError> {
     // Conversions
     let public_keys: Result<Vec<miracl::ECP>, CspDkgVerifyDealingError> = receiver_fs_public_keys
@@ -766,7 +742,7 @@ pub fn verify_zk_proofs_el_gamal(
             },
             &sharing_proof,
         )
-        .map_err(|e| {
+        .map_err(|_| {
             let error = InvalidArgumentError {
                 message: "Invalid sharing proof".to_string(),
             };

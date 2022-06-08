@@ -1,10 +1,6 @@
 //! Methods for forward secure encryption
 use miracl_core::bls12381::pair;
-use zeroize::Zeroize;
 
-use std::collections::LinkedList;
-use std::io::IoSliceMut;
-use std::io::Read;
 use std::vec::Vec;
 
 // NOTE: the paper uses multiplicative notation for operations on G1, G2, GT,
@@ -13,32 +9,15 @@ use std::vec::Vec;
 // and
 //    g^x  corresponds to g.mul(x)
 
-use crate::encryption_key_pop::{prove_pop, verify_pop, EncryptionKeyInstance, EncryptionKeyPop};
+use crate::encryption_key_pop::{prove_pop, EncryptionKeyInstance};
 use crate::forward_secure::baby_giant;
-use crate::forward_secure::Bit;
 use crate::forward_secure::Crsz;
 use crate::forward_secure::PublicKeyWithPop;
-use crate::forward_secure::SysParam;
-use crate::forward_secure::ToxicWaste;
-use crate::nizk_chunking::CHALLENGE_BITS;
-use crate::nizk_chunking::NUM_ZK_REPETITIONS;
-use crate::random_oracles::{random_oracle, HashedMap};
-use crate::utils::*;
-use ic_crypto_internal_bls12381_serde_miracl::{
-    miracl_fr_from_bytes, miracl_fr_to_bytes, miracl_g1_from_bytes, miracl_g1_to_bytes, FrBytes,
-    G1Bytes,
-};
-use ic_crypto_internal_types::sign::threshold_sig::ni_dkg::Epoch;
-use lazy_static::lazy_static;
-use miracl_core::bls12381::ecp::{ECP, G2_TABLE};
+use miracl_core::bls12381::big::BIG;
+use miracl_core::bls12381::ecp::ECP;
 use miracl_core::bls12381::ecp2::ECP2;
-use miracl_core::bls12381::fp12::FP12;
-use miracl_core::bls12381::fp4::FP4;
 use miracl_core::bls12381::rom;
-use miracl_core::bls12381::{big, big::BIG};
 use miracl_core::rand::RAND;
-
-const FP12_SIZE: usize = 12 * big::MODBYTES;
 
 /// The ciphertext is an element of Fr which is 256-bits
 pub const MESSAGE_BYTES: usize = 32;
@@ -59,6 +38,7 @@ pub const CHUNK_MAX: isize = CHUNK_MIN + CHUNK_SIZE - 1;
 /// of Fr)
 pub const NUM_CHUNKS: usize = (MESSAGE_BYTES + CHUNK_BYTES - 1) / CHUNK_BYTES;
 
+// We need a new keygen function so we can store the x directly, since the BTE keygen does not store it
 pub fn kgen(associated_data: &[u8], rng: &mut impl RAND) -> (PublicKeyWithPop, BIG) {
     let g1 = ECP::generator();
     let spec_p = BIG::new_ints(&rom::CURVE_ORDER);
@@ -84,6 +64,7 @@ pub fn kgen(associated_data: &[u8], rng: &mut impl RAND) -> (PublicKeyWithPop, B
     )
 }
 
+// decrypt_chunk decrypts all chunks of a message
 pub fn dec_chunks(sk: &BIG, i: usize, ciphertext: &Crsz) -> Vec<isize> {
     let c1 = &ciphertext.rr;
     let c2 = &ciphertext.cc[i];
@@ -106,8 +87,7 @@ pub fn dec_chunks(sk: &BIG, i: usize, ciphertext: &Crsz) -> Vec<isize> {
     let base = pair::fexp(&pair::ate(&g2, &g1));
     let mut dlogs = Vec::new();
 
-    for (j, item) in decrypt.iter().enumerate() {
-        let t = std::time::Instant::now();
+    for (_, item) in decrypt.iter().enumerate() {
         match baby_giant(item, &base, 0, CHUNK_SIZE) {
             // Happy path: honest DKG participants.
             Some(dlog) => dlogs.push(BIG::new_int(dlog)),

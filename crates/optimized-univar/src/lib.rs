@@ -19,11 +19,11 @@ use ic_types::{
 use miracl_core::bls12381::big::BIG;
 use networking::Node;
 use rand::Rng;
-use std::fs::File;
 use std::{
     collections::BTreeMap,
     io::{BufRead, BufReader},
 };
+use std::{fs::File, io::Write};
 use tokio_stream::StreamExt;
 use types::Id;
 
@@ -37,6 +37,7 @@ pub fn generate_keypairs(n: usize) {
             Randomness::from(rand::thread_rng().gen::<[u8; 32]>()),
             KEY_GEN_ASSOCIATED_DATA,
         );
+        // we do tostring so that we can use serde, the BIG is not serializable by default
         keypairs.push((pk, sk.tostring()));
     }
 
@@ -74,7 +75,6 @@ pub async fn run_dkg(my_id: usize, n: usize, d: usize, t: usize, is_dealer: bool
     if is_dealer {
         run_single_dealer(my_id, n, d, t, receiver_keys, addresses).await;
     } else {
-        println!("starting receiver");
         run_single_node(
             my_id,
             n,
@@ -147,7 +147,7 @@ async fn run_single_dealer(
 
     let total = std::time::Instant::now();
 
-    let mut t = std::time::Instant::now();
+    let t1 = std::time::Instant::now();
 
     // generate a dealing and broadcast it
     let dealing = create_dealing(
@@ -160,7 +160,8 @@ async fn run_single_dealer(
         None,
     )
     .unwrap();
-    println!("Time to create dealing: {:?}", t.elapsed());
+    let create_time = t1.elapsed();
+    let mut verify_time = t1.elapsed();
 
     node.broadcast(bincode::serialize(&dealing).unwrap().as_slice(), dealers)
         .await;
@@ -174,7 +175,7 @@ async fn run_single_dealer(
             Id::Univariate(id) => {
                 if !dealings.contains_key(&((id - n) as u32)) {
                     let dealing: Dealing = bincode::deserialize(&msg).unwrap();
-                    t = std::time::Instant::now();
+                    let t1 = std::time::Instant::now();
                     // verify dealing
                     verify_dealing(
                         nidkg_id,
@@ -185,7 +186,7 @@ async fn run_single_dealer(
                         &dealing,
                     )
                     .unwrap();
-                    println!("Time to verify dealing: {:?}", t.elapsed());
+                    verify_time = t1.elapsed();
                     dealings.insert((id - n) as u32, dealing);
                 }
             }
@@ -193,19 +194,36 @@ async fn run_single_dealer(
         }
     }
 
-    t = std::time::Instant::now();
+    let t1 = std::time::Instant::now();
     // combine the dealings into a transcript and broadcast it
     let transcript = create_transcript(threshold, NumberOfNodes::new(n as u32), &dealings).unwrap();
-    println!("Time to create transcript: {:?}", t.elapsed());
+    let transcript_time = t1.elapsed();
 
     node.broadcast(bincode::serialize(&transcript).unwrap().as_slice(), ids)
         .await;
 
     // shutdown and record results
-    println!("Total time: {:?}", total.elapsed());
-    std::thread::sleep(std::time::Duration::from_secs(20));
+    let total_time = total.elapsed();
+    std::thread::sleep(std::time::Duration::from_secs(1));
     node.shutdown();
-    println!("dealer done");
+    println!("total_time: {:?}", total_time);
+
+    let filename = format!("results/optimized_nidkg_dealer_{}_{}", n, t);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(filename)
+        .unwrap();
+
+    file.write_all(
+        format!(
+            "{:?},{:?},{:?},{:?}\n",
+            total_time, create_time, verify_time, transcript_time,
+        )
+        .as_bytes(),
+    )
+    .unwrap();
 }
 
 // run a non dealer node
@@ -221,14 +239,15 @@ async fn run_single_node(
     let mut node = Node::new(addresses, Id::Univariate(my_id)).await;
 
     // wait for transcript
+    let time = std::time::Instant::now();
     let (_, msg) = node.recv.next().await.expect("failed to read message");
     let transcript: Transcript = bincode::deserialize(&msg).unwrap();
 
     // recover the signing key
-    let t = std::time::Instant::now();
+    let t1 = std::time::Instant::now();
     let signing_key =
         compute_threshold_signing_key_univar(transcript.receiver_data, my_id as u32, &sk).unwrap();
-    println!("Time to compute signing key: {:?}", t.elapsed());
+    let compute = t1.elapsed();
 
     // sign and verify signature
     let msg: [u8; 32] = [0; 32];
@@ -242,7 +261,19 @@ async fn run_single_node(
     .unwrap();
 
     // shutdown and record results
-    std::thread::sleep(std::time::Duration::from_secs(20));
+    let total_time = time.elapsed();
+    std::thread::sleep(std::time::Duration::from_secs(1));
     node.shutdown();
-    println!("receiver done");
+    println!("total_time: {:?}", total_time);
+
+    let filename = format!("results/optimized_nidkg_{}_{}", _n, _t);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .append(true)
+        .create(true)
+        .open(filename)
+        .unwrap();
+
+    file.write_all(format!("{:?},{:?}\n", total_time, compute).as_bytes())
+        .unwrap();
 }
