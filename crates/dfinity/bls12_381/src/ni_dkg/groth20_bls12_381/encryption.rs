@@ -254,6 +254,7 @@ pub fn encrypt_and_prove_el_gamal(
     epoch: Epoch,
     public_coefficients: &Vec<PublicCoefficientsBytes>,
     associated_data: &[u8],
+    n: usize,
 ) -> Result<(FsEncryptionCiphertext, ZKProofDec, Vec<ZKProofShare>), EncryptAndZKProveError> {
     let public_keys: Result<Vec<miracl::ECP>, EncryptAndZKProveError> = key_message_pairs
         .as_ref()
@@ -320,7 +321,7 @@ pub fn encrypt_and_prove_el_gamal(
         &plaintext_chunks,
         &toxic_waste,
         &mut rng,
-        key_message_pairs.len(),
+        n,
     );
 
     Ok((

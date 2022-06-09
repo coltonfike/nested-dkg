@@ -239,6 +239,7 @@ pub fn verify_sharing(
     let rhs = instance.g2_gen.mul(&nizk.z_alpha);
 
     if !lhs.equals(&rhs) {
+        // SHARING PROOF FAILS HERE!!!
         return Err(ZkProofSharingError::InvalidProof);
     }
 

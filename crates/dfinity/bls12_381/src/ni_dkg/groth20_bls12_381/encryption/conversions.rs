@@ -234,7 +234,6 @@ pub fn ciphertext_into_miracl(
         .map(|g1_bytes| miracl_g1_from_bytes(&g1_bytes.0).or(Err("Malformed rand_s")))
         .collect::<Result<Vec<_>, _>>()?;
     // CHANGED!
-    let zz: Vec<ECP2> = Vec::new();
     let zz: Vec<ECP2> = ciphertext.rand_z[..]
         .iter()
         .map(|g2_bytes| miracl_g2_from_bytes(&g2_bytes.0).or(Err("Malformed rand_z")))

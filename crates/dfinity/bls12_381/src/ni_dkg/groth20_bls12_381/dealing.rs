@@ -13,13 +13,10 @@ use crate::{
     crypto::{keygen, keygen_with_secret},
 };
 use ic_crypto_internal_bls12381_common::fr_to_bytes;
-use ic_crypto_internal_bls12381_serde_miracl::{FrBytes, G1Bytes};
+use ic_crypto_internal_bls12381_serde_miracl::FrBytes;
 use ic_crypto_internal_types::encrypt::forward_secure::groth20_bls12_381::FsEncryptionCiphertext;
 use ic_types::crypto::threshold_sig::ni_dkg::NiDkgId;
 use ic_types::{NodeIndex, NumberOfNodes, Randomness};
-use miracl_core::bls12381::ecp::ECP;
-use rand::SeedableRng;
-use rand_chacha::ChaChaRng;
 use std::collections::BTreeMap;
 use std::convert::TryFrom;
 
@@ -28,7 +25,7 @@ use crate::types::{
     Polynomial, PublicCoefficients as PC, SecretKey as ThresholdSecretKey,
     SecretKeyBytes as ThresholdSecretKeyBytes,
 };
-use bivariate_dkg::dkg::{generate_shares, generate_shares_for_nidkg};
+use bivariate_dkg::dkg::generate_shares_for_nidkg;
 use types::bivariate::PublicCoefficients;
 // "New style" internal types, used for the NiDKG:
 use super::ALGORITHM_ID;
@@ -160,14 +157,14 @@ pub fn create_dealing(
 }
 
 pub fn create_dealing_el_gamal(
-    seed: Randomness,
+    _seed: Randomness,
     encryption_seed: Randomness,
     threshold: (NumberOfNodes, NumberOfNodes),
     nodes: (usize, usize),
     receiver_keys: &BTreeMap<(NodeIndex, NodeIndex), FsEncryptionPublicKey>,
     epoch: Epoch,
     dealer_index: NodeIndex,
-    resharing_secret: Option<ThresholdSecretKeyBytes>,
+    _resharing_secret: Option<ThresholdSecretKeyBytes>,
 ) -> Result<
     (
         PublicCoefficients,
@@ -206,6 +203,7 @@ pub fn create_dealing_el_gamal(
             epoch,
             &pub_coeffs,
             &dealer_index.to_be_bytes(),
+            nodes.0,
         )
     }?;
 
@@ -279,7 +277,7 @@ pub fn verify_dealing(
 
 pub fn verify_dealing_el_gamal(
     dealer_index: NodeIndex,
-    threshold: (NumberOfNodes, NumberOfNodes),
+    _threshold: (NumberOfNodes, NumberOfNodes),
     epoch: Epoch,
     receiver_keys: &BTreeMap<(NodeIndex, NodeIndex), FsEncryptionPublicKey>,
     dealing: &(
