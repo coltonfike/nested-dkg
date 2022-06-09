@@ -1,5 +1,7 @@
 # nested-dkg
 
+Scripts provided to run every test in the scripts directory
+
 ## Threshold Signatures
 
 ### Normal - Implementation found in crates/univariate-dkg.
